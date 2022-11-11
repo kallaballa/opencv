@@ -1023,7 +1023,7 @@ bool CvCaptureCAM_V4L::read_frame_v4l2()
 
     while (!tryIoctl(VIDIOC_DQBUF, &buf)) {
         int err = errno;
-        if (err == EIO && !(buf.flags & (V4L2_BUF_FLAG_QUEUED | V4L2_BUF_FLAG_DONE))) {
+        if (err == EAGAIN && !(buf.flags & (V4L2_BUF_FLAG_QUEUED | V4L2_BUF_FLAG_DONE))) {
             // Maybe buffer not in the queue? Try to put there
             if (!tryIoctl(VIDIOC_QBUF, &buf))
                 return false;
