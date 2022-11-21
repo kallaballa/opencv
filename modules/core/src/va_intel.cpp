@@ -543,10 +543,9 @@ void convertToVASurface(VADisplay display, InputArray src, VASurfaceID surface, 
     void* context_display = ocl_context.getContext().getOpenCLContextProperty(CL_CONTEXT_VA_API_DISPLAY_INTEL);
     CV_LOG_IF_INFO(NULL, interop && !context_display,
         "OpenCL/VA_INTEL: Can't interop with current OpenCL context - missing VA display, context re-creation is required");
-    bool isValidContextDisplay = (display == context_display);
-    CV_LOG_IF_INFO(NULL, interop && context_display && !isValidContextDisplay,
-        "OpenCL/VA_INTEL: Can't interop with current OpenCL context - VA display mismatch: " << context_display << "(context) vs " << (void*)display << "(surface)");
-    if (isValidContextDisplay && interop)
+    if(display != context_display)
+        display = context_display;
+    if (interop)
     {
         UMat u = src.getUMat();
 
@@ -683,7 +682,10 @@ void convertFromVASurface(VADisplay display, VASurfaceID surface, Size size, Out
 #ifdef HAVE_VA_INTEL
     ocl::OpenCLExecutionContext& ocl_context = ocl::OpenCLExecutionContext::getCurrent();
     VAAPIInterop* interop = ocl_context.getContext().getUserContext<VAAPIInterop>().get();
-    if (display == ocl_context.getContext().getOpenCLContextProperty(CL_CONTEXT_VA_API_DISPLAY_INTEL) && interop)
+    void* context_display = ocl_context.getContext().getOpenCLContextProperty(CL_CONTEXT_VA_API_DISPLAY_INTEL);
+    if(display != context_display)
+        display = context_display;
+    if (interop)
     {
         UMat u = dst.getUMat();
 
