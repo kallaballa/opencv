@@ -1577,7 +1577,7 @@ void cv::ogl::render(const ogl::Arrays& arr, InputArray indices, int mode, Scala
 #ifdef HAVE_OPENCL
 #  include "opencv2/core/opencl/runtime/opencl_core.hpp"
 #  include "opencv2/core/opencl/runtime/opencl_gl.hpp"
-#  ifdef cl_khr_gl_sharing
+#  if defined(cl_khr_gl_sharing) || defined(cl_apple_gl_sharing )
 #    define HAVE_OPENCL_OPENGL_SHARING
 #  else
 #    define NO_OPENCL_SHARING_ERROR CV_Error(cv::Error::StsBadFunc, "OpenCV was build without OpenCL/OpenGL sharing support")
@@ -1590,7 +1590,15 @@ void cv::ogl::render(const ogl::Arrays& arr, InputArray indices, int mode, Scala
 #  if defined(__ANDROID__)
 #    include <EGL/egl.h>
 #  elif defined(__linux__)
-#    include <GL/glx.h>
+#    if defined(OPENCV_ENABLE_EGL)
+#      include <EGL/egl.h>
+#    endif
+#    if defined(OPENCV_ENABLE_GLX)
+#      include <GL/glx.h>
+#    endif
+#  elif defined(__APPLE__)
+#    include <OpenCL/opencl.h>
+#    include <OpenGL/OpenGL.h>
 #  endif
 #endif // HAVE_OPENGL
 
@@ -1677,24 +1685,44 @@ Context& initializeContextFromGL()
                 clGetExtensionFunctionAddressForPlatform(platforms[i], "clGetGLContextInfoKHR");
         if (!clGetGLContextInfoKHR)
             continue;
+#if defined(__APPLE__)
+        CGLContextObj kCGLContext = CGLGetCurrentContext();
+        CGLShareGroupObj kCGLShareGroup = CGLGetShareGroup(kCGLContext);
 
+        cl_context_properties properties[] = { CL_CONTEXT_PROPERTY_USE_CGL_SHAREGROUP_APPLE, (cl_context_properties) kCGLShareGroup, 0 };
+#else
         cl_context_properties properties[] =
         {
-#if defined(_WIN32)
+#  if defined(_WIN32)
             CL_CONTEXT_PLATFORM, (cl_context_properties)platforms[i],
             CL_GL_CONTEXT_KHR, (cl_context_properties)wglGetCurrentContext(),
             CL_WGL_HDC_KHR, (cl_context_properties)wglGetCurrentDC(),
-#elif defined(__ANDROID__)
+#  elif defined(__ANDROID__)
             CL_CONTEXT_PLATFORM, (cl_context_properties)platforms[i],
             CL_GL_CONTEXT_KHR, (cl_context_properties)eglGetCurrentContext(),
             CL_EGL_DISPLAY_KHR, (cl_context_properties)eglGetCurrentDisplay(),
-#elif defined(__linux__)
+#  elif defined(__linux__)
+#    if defined(OPENCV_ENABLE_EGL) // prefer EGL
+            CL_CONTEXT_PLATFORM, (cl_context_properties)platforms[i],
+            CL_GL_CONTEXT_KHR, (cl_context_properties)eglGetCurrentContext(),
+            CL_EGL_DISPLAY_KHR, (cl_context_properties)eglGetCurrentDisplay(),
+#    elif defined(OPENCV_ENABLE_GLX)
             CL_CONTEXT_PLATFORM, (cl_context_properties)platforms[i],
             CL_GL_CONTEXT_KHR, (cl_context_properties)glXGetCurrentContext(),
             CL_GLX_DISPLAY_KHR, (cl_context_properties)glXGetCurrentDisplay(),
-#endif
+#    endif
+#  endif
             0
         };
+#endif
+
+#if defined(OPENCV_ENABLE_EGL) && defined(OPENCV_ENABLE_GLX) //GLX fallback
+        if(properties[4] == CL_EGL_DISPLAY_KHR && properties[3] == (cl_context_properties)EGL_NO_CONTEXT) {
+            properties[3] = (cl_context_properties)glXGetCurrentContext();
+            properties[4] = (cl_context_properties)CL_GLX_DISPLAY_KHR;
+            properties[5] = (cl_context_properties)glXGetCurrentDisplay();
+        }
+#endif
 
         // query device
         device = NULL;
