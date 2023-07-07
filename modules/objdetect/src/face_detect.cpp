@@ -106,32 +106,39 @@ public:
 
         // uild blob from input image
         cv::Mat input_blob;
+        std::vector<String> output_names = { "cls_8", "cls_16", "cls_32", "obj_8", "obj_16", "obj_32", "bbox_8", "bbox_16", "bbox_32", "kps_8", "kps_16", "kps_32" };
+        Mat results;
+
 
         if(input_image.kind() == _InputArray::UMAT) {
             cv::UMat pad_image;
             input_image.copyTo(pad_image);
             padWithDivisor(input_image,pad_image);
             input_blob = dnn::blobFromImage(pad_image);
+            // Forward
+            std::vector<UMat> output_blobs;
+            net.setInput(input_blob);
+            net.forward(output_blobs, output_names);
+            results = postProcess(output_blobs);
         } else if(input_image.kind() == _InputArray::MAT){
             cv::Mat pad_image;
             input_image.copyTo(pad_image);
             padWithDivisor(input_image,pad_image);
             input_blob = dnn::blobFromImage(pad_image);
+            // Forward
+            std::vector<Mat> output_blobs;
+            net.setInput(input_blob);
+            net.forward(output_blobs, output_names);
+            results = postProcess(output_blobs);
         }
 
-        // Forward
-        std::vector<String> output_names = { "cls_8", "cls_16", "cls_32", "obj_8", "obj_16", "obj_32", "bbox_8", "bbox_16", "bbox_32", "kps_8", "kps_16", "kps_32" };
-        std::vector<Mat> output_blobs;
-        net.setInput(input_blob);
-        net.forward(output_blobs, output_names);
-
         // Post process
-        Mat results = postProcess(output_blobs);
         results.convertTo(faces, CV_32FC1);
         return 1;
     }
 private:
-    Mat postProcess(const std::vector<Mat>& output_blobs)
+    template<class Tmat>
+    Mat postProcess(const std::vector<Tmat>& output_blobs)
     {
         Mat faces;
         for (size_t i = 0; i < strides.size(); ++i) {
@@ -139,17 +146,29 @@ private:
             int rows = int(padH / strides[i]);
 
             // Extract from output_blobs
-            Mat cls = output_blobs[i];
-            Mat obj = output_blobs[i + strides.size() * 1];
-            Mat bbox = output_blobs[i + strides.size() * 2];
-            Mat kps = output_blobs[i + strides.size() * 3];
+            int shape[1];
+            Tmat cls = output_blobs[i];
+            shape[0] = { cls.total() };
+            cls = cls.reshape(1, 1, shape);
+            Tmat obj = output_blobs[i + strides.size() * 1];
+            shape[0] = obj.total();
+            obj = obj.reshape(1, 1, shape);
+            InputArray bbox = output_blobs[i + strides.size() * 2];
+            InputArray kps = output_blobs[i + strides.size() * 3];
 
             // Decode from predictions
-            float* cls_v = (float*)(cls.data);
-            float* obj_v = (float*)(obj.data);
-            float* bbox_v = (float*)(bbox.data);
-            float* kps_v = (float*)(kps.data);
+            float* bbox_v;
+            float* kps_v;
 
+            if(bbox.isUMat())
+                bbox_v = (float*)(bbox.getUMat().getMat(ACCESS_READ).data);
+            else
+                bbox_v = (float*)(bbox.getMat().data);
+
+            if(bbox.isUMat())
+                kps_v = (float*)(kps.getUMat().getMat(ACCESS_READ).data);
+            else
+                kps_v = (float*)(kps.getMat().data);
             // (tl_x, tl_y, w, h, re_x, re_y, le_x, le_y, nt_x, nt_y, rcm_x, rcm_y, lcm_x, lcm_y, score)
             // 'tl': top left point of the bounding box
             // 're': right eye, 'le': left eye
@@ -157,21 +176,30 @@ private:
             // 'rcm': right corner of mouth, 'lcm': left corner of mouth
             Mat face(1, 15, CV_32FC1);
 
+            Tmat cls_min;
+            Tmat cls_clamp;
+            Tmat obj_min;
+            Tmat obj_clamp;
+            Tmat product;
+            Mat score;
+
+            assert(cls.channels() <= 4 && obj.channels() <= 4);
+            // Clamp
+            cv::min(cls, Scalar::all(1.0f), cls_min);
+            cv::max(cls_min, Scalar::all(0.0f), cls_clamp);
+            cv::min(obj, Scalar::all(1.0f), obj_min);
+            cv::max(obj_min, Scalar::all(0.0f), obj_clamp);
+            //Calculate score
+            cv::multiply(cls_clamp, obj_clamp, product);
+            cv::sqrt(product, score);
+
             for(int r = 0; r < rows; ++r) {
                 for(int c = 0; c < cols; ++c) {
                     size_t idx = r * cols + c;
 
-                    // Get score
-                    float cls_score = cls_v[idx];
-                    float obj_score = obj_v[idx];
-
-                    // Clamp
-                    cls_score = MIN(cls_score, 1.f);
-                    cls_score = MAX(cls_score, 0.f);
-                    obj_score = MIN(obj_score, 1.f);
-                    obj_score = MAX(obj_score, 0.f);
-                    float score = std::sqrt(cls_score * obj_score);
-                    face.at<float>(0, 14) = score;
+                    face.at<float>(0, 14) = score.at<float>(idx);
+//                    if(isnanf(bbox_v[idx * 4 + 0]) || isnanf(bbox_v[idx * 4 + 1]) || isnanf(bbox_v[idx * 4 + 2]) || isnanf(bbox_v[idx * 4 + 3]))
+//                        continue;
 
                     // Get bounding box
                     float cx = ((c + bbox_v[idx * 4 + 0]) * strides[i]);
@@ -233,8 +261,6 @@ private:
     {
         int bottom = padH - inputH;
         int right = padW - inputW;
-
-        input_image.copyTo(pad_image);
         copyMakeBorder(input_image, pad_image, 0, bottom, 0, right, BORDER_CONSTANT, 0);
     }
 private:

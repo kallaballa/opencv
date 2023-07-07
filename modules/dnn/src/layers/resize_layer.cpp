@@ -110,7 +110,32 @@ public:
             scaleWidth = static_cast<float>(inputs[0].size[3]) / outWidth;
     }
 
-    void forward(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr, OutputArrayOfArrays internals_arr) CV_OVERRIDE
+    void getVector(InputArrayOfArrays images_, std::vector<Mat>& images) {
+        images_.getMatVector(images);
+    }
+
+    void getVector(InputArrayOfArrays images_, std::vector<UMat>& images) {
+        images_.getUMatVector(images);
+    }
+
+    Mat getMat(UMat u, enum cv::AccessFlag flag) {
+        return u.getMat(flag);
+    }
+
+    Mat getMat(Mat m, enum cv::AccessFlag flag) {
+        return m;
+    }
+
+    bool isSame(Mat lhs, Mat rhs) {
+        return lhs.data == rhs.data;
+    }
+
+    bool isSame(UMat lhs, UMat rhs) {
+            return lhs.u == rhs.u;
+    }
+
+    template<class Tmat>
+    void forward(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr, OutputArrayOfArrays internals_arr)
     {
         CV_TRACE_FUNCTION();
         CV_TRACE_ARG_VALUE(name, "name", name.c_str());
@@ -121,23 +146,23 @@ public:
             return;
         }
 
-        std::vector<Mat> inputs, outputs, internals;
-        inputs_arr.getMatVector(inputs);
-        outputs_arr.getMatVector(outputs);
-        internals_arr.getMatVector(internals);
+        std::vector<Tmat> inputs, outputs, internals;
+        getVector(inputs_arr, inputs);
+        getVector(outputs_arr, outputs);
+        getVector(internals_arr, internals);
 
         if (outHeight == inputs[0].size[2] && outWidth == inputs[0].size[3])
         {
             // outputs[0] = inputs[0] doesn't work due to BlobManager optimizations
-            if (inputs[0].data != outputs[0].data)
+            if (isSame(inputs[0], outputs[0]))
             {
                 inputs[0].copyTo(outputs[0]);
             }
             return;
         }
 
-        Mat& inp = inputs[0];
-        Mat& out = outputs[0];
+        Tmat& inp = inputs[0];
+        Tmat& out = outputs[0];
         int depth = inp.depth();
         if ((interpolation == "nearest" && !alignCorners && !halfPixelCenters) || (interpolation == "opencv_linear" && depth != CV_8S) ||
             (interpolation == "bilinear" && halfPixelCenters && depth != CV_8S))
@@ -162,8 +187,8 @@ public:
             const int numPlanes = inp.size[0] * inp.size[1];
             CV_Assert_N(inp.isContinuous(), out.isContinuous());
 
-            Mat inpPlanes = inp.reshape(1, numPlanes * inpHeight);
-            Mat outPlanes = out.reshape(1, numPlanes * outHeight);
+            Mat inpPlanes = getMat(inp.reshape(1, numPlanes * inpHeight), ACCESS_RW);
+            Mat outPlanes = getMat(out.reshape(1, numPlanes * outHeight), ACCESS_RW);
 
             float heightOffset = 0.0f;
             float widthOffset = 0.0f;
@@ -242,8 +267,8 @@ public:
             const int numPlanes = inp.size[0] * inp.size[1];
             CV_Assert_N(inp.isContinuous(), out.isContinuous());
 
-            Mat inpPlanes = inp.reshape(1, numPlanes * inpHeight);
-            Mat outPlanes = out.reshape(1, numPlanes * outHeight);
+            Mat inpPlanes = getMat(inp.reshape(1, numPlanes * inpHeight), ACCESS_RW);
+            Mat outPlanes = getMat(out.reshape(1, numPlanes * outHeight), ACCESS_RW);
             if (depth == CV_8S)
             {
                 for (int y = 0; y < outHeight; ++y)
@@ -309,6 +334,15 @@ public:
         }
         else
             CV_Error(Error::StsNotImplemented, "Unknown interpolation: " + interpolation);
+    }
+
+    void forward(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr, OutputArrayOfArrays internals_arr) CV_OVERRIDE
+    {
+        if(inputs_arr.isUMat() && inputs_arr.isUMat() && inputs_arr.isUMat()) {
+            forward<UMat>(inputs_arr, outputs_arr, internals_arr);
+        } else {
+            forward<Mat>(inputs_arr, outputs_arr, internals_arr);
+        }
     }
 
 #ifdef HAVE_CANN

@@ -6,7 +6,6 @@
 
 #include <opencv2/imgproc.hpp>
 
-
 namespace cv {
 namespace dnn {
 CV__DNN_INLINE_NS_BEGIN
@@ -102,24 +101,47 @@ void getVector(InputArrayOfArrays images_, std::vector<UMat>& images) {
     images_.getUMatVector(images);
 }
 
-void dataFromPointer(Mat& m, void* ptr, int rows, int cols, int depth) {
-    m = Mat(rows, cols, depth, ptr);
+void getMat(UMat& blob, InputArray blob_) {
+    blob = blob_.getUMat();
 }
 
-void dataFromPointer(UMat& m, void* ptr, int rows, int cols, int depth) {
-    m = Mat(rows, cols, depth, ptr).getUMat(ACCESS_RW);
+void getMat(Mat& blob, InputArray blob_) {
+    blob = blob_.getMat();
+}
+
+void makeMatFromBlob(Mat& m, InputArray blob, int i, int j, int rows, int cols, int type) {
+    m = Mat(rows, cols, type, blob.getMat().ptr(i, j));
+}
+
+void makeMatFromBlob(UMat& m, InputArray blob, int i, int j, int rows, int cols, int type) {
+    UMat ublob = blob.getUMat();
+    int offset = i * cols + j;
+    int length = 1;
+    for(int i = 0; i < ublob.dims; ++i) {
+        length *= ublob.size[i];
+    }
+    const int newShape[1] { length };
+    UMat reshaped;
+    reshaped = ublob.reshape(1, 1, newShape);
+    UMat sub = reshaped(Rect(0, offset, 1, rows * cols));
+    m = sub.reshape(CV_MAT_CN(type), rows);
+    assert(m.type() == type);
+}
+
+template<class Tmat>
+bool areEqual(const Tmat& a, const Tmat& b)
+{
+    Tmat temp;
+    cv::bitwise_xor(a,b,temp);
+    return !(cv::countNonZero(temp.reshape(1)));
 }
 
 template<class Tmat>
 void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, const Image2BlobParams& param)
 {
     CV_TRACE_FUNCTION();
-    Tmat protoMat;
-    bool isUMat = false;
-    if(typeid(protoMat) != typeid(cv::UMat()))
-        isUMat = true;
-
-    if(!isUMat && typeid(protoMat) != typeid(cv::Mat())) {
+    bool isUMat = std::is_same<Tmat, UMat>::value;
+    if(!isUMat && !std::is_same<Tmat, Mat>::value) {
         String error_message = "The template parameter is expected to be either a cv::Mat or a cv::UMat";
         CV_Error(Error::StsBadArg, error_message);
     }
@@ -204,8 +226,11 @@ void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, con
         {
             int sz[] = { (int)nimages, nch, image0.rows, image0.cols };
             blob_.create(4, sz, param.ddepth);
-            Mat blob = blob_.getMat();
-            std::vector<Tmat> ch(4);
+            Tmat blob;
+            getMat(blob, blob_);
+            std::vector<Tmat> channels0;
+            split(image0, channels0);
+            std::vector<Tmat> ch = {channels0[0], channels0[0], channels0[0], channels0[0]};
 
             for (size_t i = 0; i < nimages; i++)
             {
@@ -215,10 +240,12 @@ void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, con
                 CV_Assert(image.dims == 2 && (nch == 3 || nch == 4));
                 CV_Assert(image.size() == image0.size());
 
-                for (int j = 0; j < nch; j++)
-                    dataFromPointer(ch[j], blob.ptr((int)i, j), image.rows, image.cols, param.ddepth);
+                for (int j = 0; j < nch; j++) {
+                    makeMatFromBlob(ch[j], blob, i, j ,image.rows, image.cols, param.ddepth);
+                }
                 if (param.swapRB)
                     std::swap(ch[0], ch[2]);
+
                 split(image, ch);
             }
         }
