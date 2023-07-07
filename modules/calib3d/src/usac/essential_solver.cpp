@@ -23,14 +23,17 @@ namespace cv { namespace usac {
 class EssentialMinimalSolver5ptsImpl : public EssentialMinimalSolver5pts {
 private:
     // Points must be calibrated K^-1 x
-    const Mat * points_mat;
-    const float * const pts;
+    const Mat points_mat;
     const bool use_svd, is_nister;
 public:
     explicit EssentialMinimalSolver5ptsImpl (const Mat &points_, bool use_svd_=false, bool is_nister_=false) :
-        points_mat(&points_), pts((float*)points_mat->data), use_svd(use_svd_), is_nister(is_nister_) {}
+        points_mat(points_), use_svd(use_svd_), is_nister(is_nister_)
+    {
+        CV_DbgAssert(!points_mat.empty() && points_mat.isContinuous());
+    }
 
     int estimate (const std::vector<int> &sample, std::vector<Mat> &models) const override {
+        const float * pts = points_mat.ptr<float>();
         // (1) Extract 4 null vectors from linear equations of epipolar constraint
         std::vector<double> coefficients(45); // 5 pts=rows, 9 columns
         auto *coefficients_ = &coefficients[0];
@@ -139,7 +142,7 @@ public:
             }
 
             std::vector<double> c(11), rs;
-            // filling coefficients of 10-degree polynomial satysfying zero-determinant constraint of essential matrix, ie., det(E) = 0
+            // filling coefficients of 10-degree polynomial satisfying zero-determinant constraint of essential matrix, ie., det(E) = 0
             // based on "An Efficient Solution to the Five-Point Relative Pose Problem" (David Nister)
             // same as in five-point.cpp
             c[10] = (b[0]*b[17]*b[34]+b[26]*b[4]*b[21]-b[26]*b[17]*b[8]-b[13]*b[4]*b[34]-b[0]*b[21]*b[30]+b[13]*b[30]*b[8]);
