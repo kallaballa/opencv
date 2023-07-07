@@ -27,6 +27,30 @@ using namespace cv::dnn::cuda4dnn;
 
 namespace cv { namespace dnn {
 
+void getVector(InputArrayOfArrays images_, std::vector<Mat>& images) {
+    images_.getMatVector(images);
+}
+
+void getVector(InputArrayOfArrays images_, std::vector<UMat>& images) {
+    images_.getUMatVector(images);
+}
+
+Mat getMat(UMat u, enum cv::AccessFlag flag) {
+    return u.getMat(flag);
+}
+
+Mat getMat(Mat m, enum cv::AccessFlag flag) {
+    return m;
+}
+
+bool isSame(Mat lhs, Mat rhs) {
+    return lhs.data == rhs.data;
+}
+
+bool isSame(UMat lhs, UMat rhs) {
+        return lhs.u == rhs.u;
+}
+
 class ResizeLayerImpl : public ResizeLayer
 {
 public:
@@ -110,28 +134,8 @@ public:
             scaleWidth = static_cast<float>(inputs[0].size[3]) / outWidth;
     }
 
-    void getVector(InputArrayOfArrays images_, std::vector<Mat>& images) {
-        images_.getMatVector(images);
-    }
-
-    void getVector(InputArrayOfArrays images_, std::vector<UMat>& images) {
-        images_.getUMatVector(images);
-    }
-
-    Mat getMat(UMat u, enum cv::AccessFlag flag) {
-        return u.getMat(flag);
-    }
-
-    Mat getMat(Mat m, enum cv::AccessFlag flag) {
-        return m;
-    }
-
-    bool isSame(Mat lhs, Mat rhs) {
-        return lhs.data == rhs.data;
-    }
-
-    bool isSame(UMat lhs, UMat rhs) {
-            return lhs.u == rhs.u;
+    template<class Tmat> void printHeader(const Tmat& m, std::ostream& out) {
+        out << "size:" << m.size << " dims:" << m.dims << " channels:" << m.channels() << " depth:" << m.depth()  << " type:" << m.type() << " total:" << m.total() << std::endl;
     }
 
     template<class Tmat>
@@ -154,7 +158,7 @@ public:
         if (outHeight == inputs[0].size[2] && outWidth == inputs[0].size[3])
         {
             // outputs[0] = inputs[0] doesn't work due to BlobManager optimizations
-            if (isSame(inputs[0], outputs[0]))
+            if (!isSame(inputs[0], outputs[0]))
             {
                 inputs[0].copyTo(outputs[0]);
             }
@@ -173,7 +177,10 @@ public:
             {
                 for (size_t ch = 0; ch < inputs[0].size[1]; ++ch)
                 {
-                    resize(getPlane(inp, n, ch), getPlane(out, n, ch),
+                    Tmat u1 = getPlane(inp, n, ch);
+                    Tmat u2 = getPlane(out, n, ch);
+
+                    resize(u1, u2,
                            Size(outWidth, outHeight), 0, 0, mode);
                 }
             }
@@ -338,7 +345,7 @@ public:
 
     void forward(InputArrayOfArrays inputs_arr, OutputArrayOfArrays outputs_arr, OutputArrayOfArrays internals_arr) CV_OVERRIDE
     {
-        if(inputs_arr.isUMat() && inputs_arr.isUMat() && inputs_arr.isUMat()) {
+        if(inputs_arr.isUMatVector() && inputs_arr.isUMatVector() && inputs_arr.isUMatVector()) {
             forward<UMat>(inputs_arr, outputs_arr, internals_arr);
         } else {
             forward<Mat>(inputs_arr, outputs_arr, internals_arr);

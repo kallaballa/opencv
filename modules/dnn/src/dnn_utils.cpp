@@ -20,79 +20,6 @@ Image2BlobParams::Image2BlobParams(const Scalar& scalefactor_, const Size& size_
         datalayout(datalayout_), paddingmode(mode_)
 {}
 
-Mat blobFromImage(InputArray image, const double scalefactor, const Size& size,
-        const Scalar& mean, bool swapRB, bool crop, int ddepth)
-{
-    CV_TRACE_FUNCTION();
-    Mat blob;
-    blobFromImage(image, blob, scalefactor, size, mean, swapRB, crop, ddepth);
-    return blob;
-}
-
-void blobFromImage(InputArray image, OutputArray blob, double scalefactor,
-        const Size& size, const Scalar& mean, bool swapRB, bool crop, int ddepth)
-{
-    CV_TRACE_FUNCTION();
-    if(image.isUMat()) {
-        std::vector<UMat> vec(1, image.getUMat());
-        blobFromImages(vec, blob, scalefactor, size, mean, swapRB, crop, ddepth);
-    }
-    else if(image.isMat()) {
-        std::vector<Mat> vec(1, image.getMat());
-        blobFromImages(vec, blob, scalefactor, size, mean, swapRB, crop, ddepth);
-    }
-    else
-        assert(false);
-}
-
-Mat blobFromImages(InputArrayOfArrays images, double scalefactor, Size size,
-        const Scalar& mean, bool swapRB, bool crop, int ddepth)
-{
-    CV_TRACE_FUNCTION();
-    Mat blob;
-    blobFromImages(images, blob, scalefactor, size, mean, swapRB, crop, ddepth);
-    return blob;
-}
-
-void blobFromImages(InputArrayOfArrays images_, OutputArray blob_, double scalefactor,
-        Size size, const Scalar& mean_, bool swapRB, bool crop, int ddepth)
-{
-    CV_TRACE_FUNCTION();
-    if (images_.kind() != _InputArray::STD_VECTOR_UMAT &&
-        images_.kind() != _InputArray::STD_VECTOR_MAT && images_.kind() != _InputArray::STD_ARRAY_MAT &&
-        images_.kind() != _InputArray::STD_VECTOR_VECTOR) {
-        String error_message = "The data is expected as vectors of vectors or vectors of matrices.";
-        CV_Error(Error::StsBadArg, error_message);
-    }
-    Image2BlobParams param(Scalar::all(scalefactor), size, mean_, swapRB, ddepth);
-    if (crop)
-        param.paddingmode = DNN_PMODE_CROP_CENTER;
-    blobFromImagesWithParams(images_, blob_, param);
-}
-
-Mat blobFromImageWithParams(InputArray image, const Image2BlobParams& param)
-{
-    CV_TRACE_FUNCTION();
-    Mat blob;
-    blobFromImageWithParams(image, blob, param);
-    return blob;
-}
-
-void blobFromImageWithParams(InputArray image, OutputArray blob, const Image2BlobParams& param)
-{
-    CV_TRACE_FUNCTION();
-    std::vector<Mat> images(1, image.getMat());
-    blobFromImagesWithParams(images, blob, param);
-}
-
-Mat blobFromImagesWithParams(InputArrayOfArrays images, const Image2BlobParams& param)
-{
-    CV_TRACE_FUNCTION();
-    Mat blob;
-    blobFromImagesWithParams(images, blob, param);
-    return blob;
-}
-
 void getVector(InputArrayOfArrays images_, std::vector<Mat>& images) {
     images_.getMatVector(images);
 }
@@ -101,12 +28,20 @@ void getVector(InputArrayOfArrays images_, std::vector<UMat>& images) {
     images_.getUMatVector(images);
 }
 
-void getMat(UMat& blob, InputArray blob_) {
-    blob = blob_.getUMat();
+void getMat(UMat& blob, InputArray blob_, AccessFlag flag) {
+    if(blob_.kind() == _InputArray::UMAT)
+        blob = blob_.getUMat();
+    else if(blob_.kind() == _InputArray::MAT) {
+        blob = blob_.getMat().getUMat(flag);
+    }
 }
 
-void getMat(Mat& blob, InputArray blob_) {
-    blob = blob_.getMat();
+void getMat(Mat& blob, InputArray blob_, AccessFlag flag) {
+    if(blob_.kind() == _InputArray::UMAT)
+        blob = blob_.getUMat().getMat(flag);
+    else if(blob_.kind() == _InputArray::MAT) {
+        blob = blob_.getMat();
+    }
 }
 
 void makeMatFromBlob(Mat& m, InputArray blob, int i, int j, int rows, int cols, int type) {
@@ -128,16 +63,50 @@ void makeMatFromBlob(UMat& m, InputArray blob, int i, int j, int rows, int cols,
     assert(m.type() == type);
 }
 
-template<class Tmat>
-bool areEqual(const Tmat& a, const Tmat& b)
+
+void blobFromImage(InputArray image, OutputArray blob, double scalefactor,
+        const Size& size, const Scalar& mean, bool swapRB, bool crop, int ddepth)
 {
-    Tmat temp;
-    cv::bitwise_xor(a,b,temp);
-    return !(cv::countNonZero(temp.reshape(1)));
+    CV_TRACE_FUNCTION();
+    if(image.kind() == _InputArray::UMAT) {
+        UMat u = image.getUMat();
+        std::vector<UMat> vec(1, u);
+        blobFromImages(vec, blob, scalefactor, size, mean, swapRB, crop, ddepth);
+    } else if(image.kind() == _InputArray::MAT) {
+        Mat m = image.getMat();
+        std::vector<Mat> vec(1, m);
+        blobFromImages(vec, blob, scalefactor, size, mean, swapRB, crop, ddepth);
+    } else {
+        assert(false);
+    }
+}
+
+Mat blobFromImage(InputArray image, const double scalefactor, const Size& size,
+        const Scalar& mean, bool swapRB, bool crop, int ddepth)
+{
+    CV_TRACE_FUNCTION();
+    Mat blob;
+    if(image.kind() == _InputArray::UMAT) {
+        UMat ublob = blob.getUMat(cv::ACCESS_RW);
+        blobFromImage(image, blob, scalefactor, size, mean, swapRB, crop, ddepth);
+    } else if(image.kind() == _InputArray::MAT) {
+        blobFromImage(image, blob, scalefactor, size, mean, swapRB, crop, ddepth);
+    }
+
+    return blob;
+}
+
+Mat blobFromImages(InputArrayOfArrays images, double scalefactor, Size size,
+        const Scalar& mean, bool swapRB, bool crop, int ddepth)
+{
+    CV_TRACE_FUNCTION();
+    UMat blob;
+    blobFromImages(images, blob, scalefactor, size, mean, swapRB, crop, ddepth);
+    return blob.getMat(ACCESS_RW).clone();
 }
 
 template<class Tmat>
-void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, const Image2BlobParams& param)
+void blobFromImagesWithParams(InputArrayOfArrays images_, Tmat& blob_, const Image2BlobParams& param)
 {
     CV_TRACE_FUNCTION();
     bool isUMat = std::is_same<Tmat, UMat>::value;
@@ -226,11 +195,17 @@ void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, con
         {
             int sz[] = { (int)nimages, nch, image0.rows, image0.cols };
             blob_.create(4, sz, param.ddepth);
-            Tmat blob;
-            getMat(blob, blob_);
-            std::vector<Tmat> channels0;
-            split(image0, channels0);
-            std::vector<Tmat> ch = {channels0[0], channels0[0], channels0[0], channels0[0]};
+            int szr[1] = { int(nimages * nch * image0.rows * image0.cols) };
+            blob_.reshape(1, 1, szr) = cv::Scalar::all(0);
+            std::vector<Tmat> ch(4);
+            ch[0] = Tmat(image0.size(), CV_MAT_DEPTH(image0.type()));
+            ch[1] = Tmat(image0.size(), CV_MAT_DEPTH(image0.type()));
+            ch[2] = Tmat(image0.size(), CV_MAT_DEPTH(image0.type()));
+            ch[3] = Tmat(image0.size(), CV_MAT_DEPTH(image0.type()));
+            ch[0] = cv::Scalar::all(0);
+            ch[1] = cv::Scalar::all(0);
+            ch[2] = cv::Scalar::all(0);
+            ch[3] = cv::Scalar::all(0);
 
             for (size_t i = 0; i < nimages; i++)
             {
@@ -241,7 +216,7 @@ void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, con
                 CV_Assert(image.size() == image0.size());
 
                 for (int j = 0; j < nch; j++) {
-                    makeMatFromBlob(ch[j], blob, i, j ,image.rows, image.cols, param.ddepth);
+                    makeMatFromBlob(ch[j], blob_, i, j ,image.rows, image.cols, param.ddepth);
                 }
                 if (param.swapRB)
                     std::swap(ch[0], ch[2]);
@@ -254,7 +229,10 @@ void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, con
             CV_Assert(nch == 1);
             int sz[] = { (int)nimages, 1, image0.rows, image0.cols };
             blob_.create(4, sz, param.ddepth);
-            Mat blob = blob_.getMat();
+            int szr[1] = { int(nimages * 1 * image0.rows * image0.cols) };
+            blob_.reshape(1, 1, szr) = cv::Scalar::all(0);
+            Mat blob;
+            getMat(blob, blob_, ACCESS_RW);
 
             for (size_t i = 0; i < nimages; i++)
             {
@@ -272,7 +250,10 @@ void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, con
     {
         int sz[] = { (int)nimages, image0.rows, image0.cols, nch};
         blob_.create(4, sz, param.ddepth);
-        Mat blob = blob_.getMat();
+        int szr[1] = { int(nimages * nch * image0.rows * image0.cols) };
+        blob_.reshape(1, 1, szr) = cv::Scalar::all(0);
+        Mat blob;
+        getMat(blob, blob_, ACCESS_RW);
         int subMatType = CV_MAKETYPE(param.ddepth, nch);
         for (size_t i = 0; i < nimages; i++)
         {
@@ -294,6 +275,81 @@ void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, con
         CV_Error(Error::StsUnsupportedFormat, "Unsupported data layout in blobFromImagesWithParams function.");
 }
 
+void blobFromImages(InputArrayOfArrays images_, OutputArray blob_, double scalefactor,
+        Size size, const Scalar& mean_, bool swapRB, bool crop, int ddepth)
+{
+    CV_TRACE_FUNCTION();
+    if (images_.kind() != _InputArray::STD_VECTOR_UMAT &&
+        images_.kind() != _InputArray::STD_VECTOR_MAT && images_.kind() != _InputArray::STD_ARRAY_MAT &&
+        images_.kind() != _InputArray::STD_VECTOR_VECTOR) {
+        String error_message = "The data is expected as vectors of vectors or vectors of matrices.";
+        CV_Error(Error::StsBadArg, error_message);
+    }
+    Image2BlobParams param(Scalar::all(scalefactor), size, mean_, swapRB, ddepth);
+    if (crop)
+        param.paddingmode = DNN_PMODE_CROP_CENTER;
+    if(blob_.kind() == _InputArray::UMAT) {
+        UMat u;
+        blobFromImagesWithParams<UMat>(images_, u, param);
+        u.copyTo(blob_);
+    } else if(blob_.kind() == _InputArray::MAT) {
+        Mat m;
+        blobFromImagesWithParams<Mat>(images_, m, param);
+        m.copyTo(blob_);
+    }
+    else
+        assert(false);
+}
+
+Mat blobFromImageWithParams(InputArray image, const Image2BlobParams& param)
+{
+    CV_TRACE_FUNCTION();
+    if(image.kind() == _InputArray::UMAT) {
+        cv::UMat blob;
+        std::vector<UMat> images(1, image.getUMat());
+        blobFromImagesWithParams<cv::UMat>(images, blob, param);
+        return blob.getMat(ACCESS_RW).clone();
+    } else if(image.kind() == _InputArray::MAT) {
+        cv::Mat blob;
+        std::vector<Mat> images(1, image.getMat());
+        blobFromImagesWithParams<cv::Mat>(images, blob, param);
+        return blob;
+    } else
+        assert(false); //FIXME
+
+    return {};
+}
+
+void blobFromImageWithParams(InputArray image, OutputArray blob, const Image2BlobParams& param)
+{
+    CV_TRACE_FUNCTION();
+    if(image.kind() == _InputArray::UMAT && blob.kind() == _InputArray::UMAT) {
+        std::vector<UMat> images(1, image.getUMat());
+        UMat u = blob.getUMat();
+        blobFromImagesWithParams<cv::UMat>(images, u, param);
+    } else if(image.kind() == _InputArray::MAT && blob.kind() == _InputArray::MAT) {
+        std::vector<Mat> images(1, image.getMat());
+        Mat m = blob.getMat();
+        blobFromImagesWithParams<cv::Mat>(images, m, param);
+
+    } else
+        assert(false); //FIXME
+}
+
+Mat blobFromImagesWithParams(InputArrayOfArrays images, const Image2BlobParams& param)
+{
+    CV_TRACE_FUNCTION();
+    if(images.kind() == _InputArray::STD_VECTOR_UMAT) {
+        UMat blob;
+        blobFromImagesWithParams<UMat>(images, blob, param);
+        return blob.getMat(ACCESS_RW).clone();
+    } else {
+        Mat blob;
+        blobFromImagesWithParams<Mat>(images, blob, param);
+        return blob;
+    }
+}
+
 void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, const Image2BlobParams& param)
 {
     CV_TRACE_FUNCTION();
@@ -305,12 +361,26 @@ void blobFromImagesWithParams(InputArrayOfArrays images_, OutputArray blob_, con
     CV_CheckType(param.ddepth, param.ddepth == CV_32F || param.ddepth == CV_8U,
                  "Blob depth should be CV_32F or CV_8U");
 
-    if(images_.kind() == _InputArray::STD_VECTOR_MAT)
-        blobFromImagesWithParams<Mat>(images_, blob_, param);
-    else if(images_.kind() == _InputArray::STD_VECTOR_UMAT)
-        blobFromImagesWithParams<UMat>(images_, blob_, param);
-    else
-        assert(false);
+    if(images_.kind() == _InputArray::STD_VECTOR_MAT) {
+        if(blob_.kind() == _InputArray::MAT) {
+            Mat m = blob_.getMat();
+            blobFromImagesWithParams<Mat>(images_, m, param);
+        } else if(blob_.kind() == _InputArray::UMAT) {
+            Mat m = blob_.getUMat().getMat(ACCESS_RW);
+            blobFromImagesWithParams<Mat>(images_, m, param);
+        }
+    }
+    else if(images_.kind() == _InputArray::STD_VECTOR_UMAT) {
+        if(blob_.kind() == _InputArray::MAT) {
+            UMat u = blob_.getMat().getUMat(ACCESS_RW);
+            blobFromImagesWithParams<UMat>(images_, u, param);
+        } else if(blob_.kind() == _InputArray::UMAT) {
+            UMat u = blob_.getUMat();
+            blobFromImagesWithParams<UMat>(images_, u, param);
+        }
+
+    } else
+        assert(false); //FIXME
 
 }
 

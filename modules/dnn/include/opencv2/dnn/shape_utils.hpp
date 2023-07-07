@@ -119,7 +119,6 @@ static inline Mat getPlane(const Mat &m, int n, int cn)
 static inline UMat getPlane(const UMat &m, int n, int cn)
 {
     CV_Assert(m.dims > 2);
-    int offset = n * m.cols + cn;
     int totalLength = 1;
     for(int i = 0; i < m.dims; ++i) {
         totalLength *= m.size.p[i];
@@ -127,17 +126,16 @@ static inline UMat getPlane(const UMat &m, int n, int cn)
 
     int sz[CV_MAX_DIM];
     int targetLength = 1;
-    for(int i = 2; i < m.dims; i++)
-    {
+    for(int i = 2; i < m.dims; i++) {
         sz[i-2] = m.size.p[i];
         targetLength *= m.size.p[i];
     }
 
+    int offset = cn * targetLength + n;
     const int newShape[1] { totalLength };
-    UMat reshaped;
-    reshaped = m.reshape(1, 1, newShape);
-    UMat sub = reshaped(Rect(0, offset, 1, targetLength));
-    return sub.reshape(m.channels(), m.dims - 2, sz);
+    UMat reshaped = m.reshape(1, 1, newShape);
+    UMat roi = reshaped(Rect(0, offset, 1, targetLength));
+    return roi.reshape(m.channels(), m.dims - 2, sz);
 }
 
 static inline MatShape shape(const int* dims, const int n)

@@ -12,6 +12,7 @@
 #endif
 
 #include <algorithm>
+#include <iostream>
 
 namespace cv
 {
@@ -102,34 +103,29 @@ public:
             return 0;
         }
         CV_CheckEQ(input_image.size(), Size(inputW, inputH), "Size does not match. Call setInputSize(size) if input size does not match the preset size");
-        // Pad input_image with divisor 32
-
-        // uild blob from input image
-        cv::Mat input_blob;
         std::vector<String> output_names = { "cls_8", "cls_16", "cls_32", "obj_8", "obj_16", "obj_32", "bbox_8", "bbox_16", "bbox_32", "kps_8", "kps_16", "kps_32" };
         Mat results;
-
+        std::vector<UMat> u_output_blobs;
+        std::vector<Mat> m_output_blobs;
 
         if(input_image.kind() == _InputArray::UMAT) {
             cv::UMat pad_image;
-            input_image.copyTo(pad_image);
-            padWithDivisor(input_image,pad_image);
-            input_blob = dnn::blobFromImage(pad_image);
+            padWithDivisor(input_image.getUMat(),pad_image);
+            cv::UMat input_blob;
+            dnn::blobFromImage(pad_image, input_blob);
             // Forward
-            std::vector<UMat> output_blobs;
             net.setInput(input_blob);
-            net.forward(output_blobs, output_names);
-            results = postProcess(output_blobs);
+            net.forward(u_output_blobs, output_names);
+            results = postProcess(u_output_blobs);
         } else if(input_image.kind() == _InputArray::MAT){
             cv::Mat pad_image;
-            input_image.copyTo(pad_image);
-            padWithDivisor(input_image,pad_image);
-            input_blob = dnn::blobFromImage(pad_image);
+            padWithDivisor(input_image.getMat(),pad_image);
+            cv::Mat input_blob;
+            dnn::blobFromImage(pad_image, input_blob);
             // Forward
-            std::vector<Mat> output_blobs;
             net.setInput(input_blob);
-            net.forward(output_blobs, output_names);
-            results = postProcess(output_blobs);
+            net.forward(m_output_blobs, output_names);
+            results = postProcess(m_output_blobs);
         }
 
         // Post process
@@ -137,6 +133,22 @@ public:
         return 1;
     }
 private:
+    void getMat(UMat& blob, InputArray blob_) {
+        blob = blob_.getUMat();
+    }
+
+    void getMat(Mat& blob, InputArray blob_) {
+        blob = blob_.getMat();
+    }
+
+    uchar* getData(UMat& u) {
+        return u.getMat(ACCESS_RW).data;
+    }
+
+    uchar* getData(Mat& m) {
+        return m.data;
+    }
+
     template<class Tmat>
     Mat postProcess(const std::vector<Tmat>& output_blobs)
     {
@@ -153,22 +165,15 @@ private:
             Tmat obj = output_blobs[i + strides.size() * 1];
             shape[0] = obj.total();
             obj = obj.reshape(1, 1, shape);
-            InputArray bbox = output_blobs[i + strides.size() * 2];
-            InputArray kps = output_blobs[i + strides.size() * 3];
+            Tmat bbox;
+            Tmat kps;
+            getMat(bbox, output_blobs[i + strides.size() * 2]);
+            getMat(kps, output_blobs[i + strides.size() * 3]);
 
             // Decode from predictions
-            float* bbox_v;
-            float* kps_v;
+            float* bbox_v = (float*)getData(bbox);
+            float* kps_v = (float*)getData(kps);
 
-            if(bbox.isUMat())
-                bbox_v = (float*)(bbox.getUMat().getMat(ACCESS_READ).data);
-            else
-                bbox_v = (float*)(bbox.getMat().data);
-
-            if(bbox.isUMat())
-                kps_v = (float*)(kps.getUMat().getMat(ACCESS_READ).data);
-            else
-                kps_v = (float*)(kps.getMat().data);
             // (tl_x, tl_y, w, h, re_x, re_y, le_x, le_y, nt_x, nt_y, rcm_x, rcm_y, lcm_x, lcm_y, score)
             // 'tl': top left point of the bounding box
             // 're': right eye, 'le': left eye
@@ -198,9 +203,6 @@ private:
                     size_t idx = r * cols + c;
 
                     face.at<float>(0, 14) = score.at<float>(idx);
-//                    if(isnanf(bbox_v[idx * 4 + 0]) || isnanf(bbox_v[idx * 4 + 1]) || isnanf(bbox_v[idx * 4 + 2]) || isnanf(bbox_v[idx * 4 + 3]))
-//                        continue;
-
                     // Get bounding box
                     float cx = ((c + bbox_v[idx * 4 + 0]) * strides[i]);
                     float cy = ((r + bbox_v[idx * 4 + 1]) * strides[i]);
@@ -256,12 +258,12 @@ private:
         }
     }
 
-
-    void padWithDivisor(InputArray& input_image, OutputArray& pad_image)
+    template<class Tmat>
+    void padWithDivisor(const Tmat& input_image, OutputArray pad_image)
     {
         int bottom = padH - inputH;
         int right = padW - inputW;
-        copyMakeBorder(input_image, pad_image, 0, bottom, 0, right, BORDER_CONSTANT, 0);
+        copyMakeBorder(input_image.clone(), pad_image, 0, bottom, 0, right, BORDER_CONSTANT, 0);
     }
 private:
     dnn::Net net;
