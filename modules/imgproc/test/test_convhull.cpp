@@ -133,15 +133,14 @@ public:
     int start_index;
     bool clockwise;
 
-    Mat contour;
+    std::vector<Point2i> contour;
 
     virtual void SetUp()
     {
         clockwise = GET_PARAM(0);
         start_index = GET_PARAM(1);
 
-        const int N = 11;
-        const Point2i points[N] = {
+        contour = {
             Point2i(154, 408),
             Point2i(45, 223),
             Point2i(115, 275), // inner
@@ -155,12 +154,12 @@ public:
             Point2i(224, 390)
         };
 
-        contour = Mat(N, 1, CV_32SC2);
-        for (int i = 0; i < N; i++)
+        size_t N = contour.size();
+        for (size_t i = 0; i < N; i++)
         {
-            contour.at<Point2i>(i) = (!clockwise) // image and convexHull coordinate systems are different
-                    ? points[(start_index + i) % N]
-                    : points[N - 1 - ((start_index + i) % N)];
+            contour[i] = (!clockwise) // image and convexHull coordinate systems are different
+                    ? contour[(start_index + i) % N]
+                    : contour[N - 1 - ((start_index + i) % N)];
         }
     }
 };
@@ -224,7 +223,9 @@ TEST(Imgproc_FitLine, regression_4903)
 // the Python test by @hannarud is converted to C++; see the issue #4539
 TEST(Imgproc_ConvexityDefects, ordering_4539)
 {
-    int contour[][2] =
+    constexpr int scale = 20;
+    constexpr int npoints = 80;
+    constexpr int coords[npoints][2] =
     {
         {26,  9}, {25, 10}, {24, 10}, {23, 10}, {22, 10}, {21, 10}, {20, 11}, {19, 11}, {18, 11}, {17, 12},
         {17, 13}, {18, 14}, {18, 15}, {18, 16}, {18, 17}, {19, 18}, {19, 19}, {20, 20}, {21, 21}, {21, 22},
@@ -235,21 +236,27 @@ TEST(Imgproc_ConvexityDefects, ordering_4539)
         {46, 12}, {45, 11}, {44, 11}, {43, 11}, {42, 10}, {41, 10}, {40,  9}, {39,  9}, {38,  9}, {37,  9},
         {36,  9}, {35,  9}, {34,  9}, {33,  9}, {32,  9}, {31,  9}, {30,  9}, {29,  9}, {28,  9}, {27,  9}
     };
-    int npoints = (int)(sizeof(contour)/sizeof(contour[0][0])/2);
-    Mat contour_(1, npoints, CV_32SC2, contour);
+
+    std::vector<Point2i> contour;
+    contour.resize(npoints);
+    for(size_t i = 0; i < contour.size(); ++i) {
+        contour[i] = Point2i(coords[i][0], coords[i][1]);
+    }
+
     vector<Point> hull;
     vector<int> hull_ind;
     vector<Vec4i> defects;
 
     // first, check the original contour as-is, without intermediate fillPoly/drawContours.
-    convexHull(contour_, hull_ind, false, false);
-    EXPECT_THROW( convexityDefects(contour_, hull_ind, defects), cv::Exception );
+    convexHull(contour, hull_ind, false, false);
+    EXPECT_THROW( convexityDefects(contour, hull_ind, defects), cv::Exception );
 
-    int scale = 20;
-    contour_ *= (double)scale;
+    std::transform(contour.begin(), contour.end(), contour.begin(),
+            [](Point2i& pt) { return (pt *= scale);}
+    );
 
     Mat canvas_gray(Size(60*scale, 45*scale), CV_8U, Scalar::all(0));
-    const Point* ptptr = contour_.ptr<Point>();
+    const Point* ptptr = contour.data();
     fillPoly(canvas_gray, &ptptr, &npoints, 1, Scalar(255, 255, 255));
 
     vector<vector<Point> > contours;
