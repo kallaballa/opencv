@@ -252,7 +252,7 @@ TEST(Imgproc_ConvexityDefects, ordering_4539)
     EXPECT_THROW( convexityDefects(contour, hull_ind, defects), cv::Exception );
 
     std::transform(contour.begin(), contour.end(), contour.begin(),
-            [](Point2i& pt) { return pt * scale;}
+            [](const Point2i& pt) { return pt * scale;}
     );
 
     Mat canvas_gray(Size(60*scale, 45*scale), CV_8U, Scalar::all(0));
