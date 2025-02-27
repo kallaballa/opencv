@@ -151,7 +151,8 @@ void convexHull( InputArray _points, OutputArray _hull, bool clockwise, bool ret
 {
     CV_INSTRUMENT_REGION();
 
-    CV_Assert(_points.getObj() != _hull.getObj());
+    CV_Assert(_points.getObj() != _hull.getObj() && _hull.isVector());
+    CV_Assert((_points.isMat() || _points.isVector()) && _hull.isVector());
     Mat mPoints = _points.getMat();
 
     int total = mPoints.checkVector(2), depth = mPoints.depth(), nout = 0;
@@ -327,11 +328,10 @@ void convexHull( InputArray _points, OutputArray _hull, bool clockwise, bool ret
     if( !returnPoints ) {
         Mat(nout, 1, CV_32S, hullbuf).copyTo(_hull);
     } else {
-        const InputArray tmplate = std::vector<Point>();
-        _hull.create(nout, 1, tmplate.type());
-        Point* ptr = reinterpret_cast<Point*>(_hull.getMat().ptr(0));
+        std::vector<Point>& vHull = *static_cast<std::vector<Point>*>(_hull.getObj());
+        vHull.resize(nout);
         for (int j = 0; j < nout; j++) {
-            ptr[j] = points[hullbuf[j]];
+            vHull[j] = points[hullbuf[j]];
         }
     }
 }
