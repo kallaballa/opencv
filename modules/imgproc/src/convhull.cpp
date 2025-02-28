@@ -153,6 +153,7 @@ void convexHull( InputArray _points, OutputArray _hull, bool clockwise, bool ret
 
     CV_Assert(_points.getObj() != _hull.getObj() && _hull.isVector());
     CV_Assert((_points.isMat() || _points.isVector()) && _hull.isVector());
+
     Mat mPoints = _points.getMat();
 
     int total = mPoints.checkVector(2), depth = mPoints.depth(), nout = 0;
