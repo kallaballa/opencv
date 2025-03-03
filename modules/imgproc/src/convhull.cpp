@@ -48,16 +48,12 @@ namespace cv
 
 namespace detail {
 template<typename T>
-std::vector<T>& getVec(InputArray _input) {
-    std::vector<T> *input;
-    if (_input.isVector()) {
-        input = static_cast<std::vector<T>*>(_input.getObj());
-    } else {
-        size_t length = _input.total();
-        T *data = reinterpret_cast<T*>(_input.getMat().data);
-        input = new std::vector<T>(data, data + length);
-    }
-    return *input;
+void getVec(InputArray _input, std::vector<T>& output) {
+//        Mat m = _input.getMat();
+//        size_t length = m.total();
+//        T* ptr = m.ptr<T>();
+//        output = std::vector<T>(ptr, ptr + length);
+        _input.copyTo(output);
 }
 }
 template<typename _Tp, typename _DotTp>
@@ -155,10 +151,25 @@ void convexHull( InputArray _points, OutputArray _hull, bool clockwise, bool ret
     CV_Assert((_points.isMat() || _points.isVector()) && _hull.isVector());
 
     Mat mPoints = _points.getMat();
+    CV_Assert(mPoints.isContinuous());
 
+    //#ifndef NDEBUG
+//    {
+//        const std::vector<Point2i>* p = reinterpret_cast<std::vector<Point2i>*>(_points.getObj());
+//        const std::vector<Point2f>* pf = reinterpret_cast<std::vector<Point2f>*>(_points.getObj());
+//        const Mat* m = reinterpret_cast<Mat*>(_points.getObj());
+//        const Mat_<Point2i>* mi = reinterpret_cast<Mat_<Point2i>*>(_points.getObj());
+//        const Mat_<Point2f>* mf = reinterpret_cast<Mat_<Point2f>*>(_points.getObj());
+//        size_t sz = mPoints.total();
+//        if(p->size() != sz && pf->size() != sz && m->total() != sz && mi->total() != sz && mf->total() != sz) {
+//            CV_Error(cv::Error::StsUnsupportedFormat,"Unsupported");
+//        }
+//    }
+//#endif
     int total = mPoints.checkVector(2), depth = mPoints.depth(), nout = 0;
     int miny_ind = 0, maxy_ind = 0;
     CV_Assert(total >= 0 && (depth == CV_32F || depth == CV_32S));
+
 
     if( total == 0 )
     {
@@ -172,14 +183,18 @@ void convexHull( InputArray _points, OutputArray _hull, bool clockwise, bool ret
     bool is_float = depth == CV_32F;
 
     if(is_float) {
-    	pointsf = detail::getVec<Point2f>(_points);
-    	points.resize(pointsf.size());
+        detail::getVec<Point2f>(_points, pointsf);
+        CV_Assert(pointsf.size() == total);
+
+        points.resize(pointsf.size());
         for(size_t j = 0; j < pointsf.size(); j++ ) {
             points[j] = Point(pointsf[j].x, pointsf[j].y);
         }
     } else {
-    	points = detail::getVec<Point>(_points);
-        pointsf.resize(points.size());
+    	detail::getVec<Point>(_points, points);
+    	CV_Assert(points.size() == total);
+
+    	pointsf.resize(points.size());
         for(size_t j = 0; j < points.size(); j++ ) {
             pointsf[j] = Point2f(points[j].x, points[j].y);
         }
@@ -188,8 +203,6 @@ void convexHull( InputArray _points, OutputArray _hull, bool clockwise, bool ret
     std::vector<int> _stack(total + 2), _hullbuf(total);
     int* stack = _stack.data();
     int* hullbuf = _hullbuf.data();
-
-    CV_Assert(mPoints.isContinuous());
 
     // sort the point set by x-coordinate, find min and max y
     if( !is_float )
