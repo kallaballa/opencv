@@ -153,19 +153,6 @@ void convexHull( InputArray _points, OutputArray _hull, bool clockwise, bool ret
     Mat mPoints = _points.getMat();
     CV_Assert(mPoints.isContinuous());
 
-    //#ifndef NDEBUG
-//    {
-//        const std::vector<Point2i>* p = reinterpret_cast<std::vector<Point2i>*>(_points.getObj());
-//        const std::vector<Point2f>* pf = reinterpret_cast<std::vector<Point2f>*>(_points.getObj());
-//        const Mat* m = reinterpret_cast<Mat*>(_points.getObj());
-//        const Mat_<Point2i>* mi = reinterpret_cast<Mat_<Point2i>*>(_points.getObj());
-//        const Mat_<Point2f>* mf = reinterpret_cast<Mat_<Point2f>*>(_points.getObj());
-//        size_t sz = mPoints.total();
-//        if(p->size() != sz && pf->size() != sz && m->total() != sz && mi->total() != sz && mf->total() != sz) {
-//            CV_Error(cv::Error::StsUnsupportedFormat,"Unsupported");
-//        }
-//    }
-//#endif
     int total = mPoints.checkVector(2), depth = mPoints.depth(), nout = 0;
     int miny_ind = 0, maxy_ind = 0;
     CV_Assert(total >= 0 && (depth == CV_32F || depth == CV_32S));
