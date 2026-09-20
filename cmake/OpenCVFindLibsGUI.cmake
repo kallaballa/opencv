@@ -2,6 +2,17 @@
 #  Detect 3rd-party GUI libraries
 # ----------------------------------------------------------------------------
 
+if(WITH_OPENGL)
+  OCV_OPTION(OPENCV_ENABLE_EGL_INTEROP "Enable OpenGL/OpenCV interop via EGL" OFF
+    VISIBLE_IF WITH_OPENGL
+    VERIFY HAVE_EGL
+  )
+
+  OCV_OPTION(OPENCV_ENABLE_GLX_INTEROP "Enable OpenGL/OpenCV interop via GLX" OFF
+    VISIBLE_IF WITH_OPENGL
+    VERIFY HAVE_GLX
+  )
+endif()
 # --- QT4/5 ---
 ocv_clear_vars(HAVE_QT HAVE_QT5)
 
@@ -66,6 +77,14 @@ if(WITH_OPENGL)
   find_package (OpenGL QUIET)
   if(OPENGL_FOUND)
     set(HAVE_OPENGL TRUE)
+    
+    if(OpenGL_EGL_FOUND)
+      set(HAVE_EGL TRUE)
+    endif()
+    if(OpenGL_GLX_FOUND)
+      set(HAVE_GLX TRUE)
+    endif()
+
     if(QT_QTOPENGL_FOUND)
       set(HAVE_QT_OPENGL TRUE)
     else()
