@@ -71,8 +71,15 @@ if(WITH_HARFBUZZ)
       unset(CMAKE_REQUIRED_LIBRARIES)
 
       if(HARFBUZZ_HAS_RASTER)
-        set(HARFBUZZ_INCLUDE_DIR "${_hb_inc}" CACHE INTERNAL "")
-        set(HARFBUZZ_LIBRARIES "${_hb_libs}" CACHE INTERNAL "")
+        set(HARFBUZZ_INCLUDE_DIR "${_hb_inc}" CACHE INTERNAL "" FORCE)
+        set(HARFBUZZ_LIBRARIES "${_hb_libs}" CACHE INTERNAL "" FORCE)
+        # Consumers use OPENCV_HARFBUZZ_* instead of HARFBUZZ_*: the latter
+        # collides with a normal variable created by ocv_check_modules/
+        # pkg-config that shadows the cache in nested directory scopes (seen
+        # with CMake 4.3 on Fedora), silently reverting imgproc to core-only
+        # libharfbuzz and breaking the link with undefined hb_raster_*.
+        set(OPENCV_HARFBUZZ_LIBRARIES "${_hb_libs}" CACHE INTERNAL "" FORCE)
+        set(OPENCV_HARFBUZZ_INCLUDE_DIR "${_hb_inc}" CACHE INTERNAL "" FORCE)
         set(HAVE_HARFBUZZ 1)
       else()
         message(STATUS "HarfBuzz: found system version ${HARFBUZZ_VERSION} but it lacks the hb-raster API; building the bundled copy instead")
@@ -97,6 +104,10 @@ if(WITH_HARFBUZZ)
     endif()
     set(HARFBUZZ_VERSION "build (${_hb_version})" CACHE INTERNAL "")
     set(HARFBUZZ_IS_BUNDLED YES)
+    # Consumers use OPENCV_HARFBUZZ_* (see note above); the bundled target is
+    # referenced by name so no absolute path is needed.
+    set(OPENCV_HARFBUZZ_LIBRARIES "libharfbuzz" CACHE INTERNAL "" FORCE)
+    set(OPENCV_HARFBUZZ_INCLUDE_DIR "${libharfbuzz_SOURCE_DIR}/src" CACHE INTERNAL "" FORCE)
     set(HAVE_HARFBUZZ 1)
   endif()
 endif()
