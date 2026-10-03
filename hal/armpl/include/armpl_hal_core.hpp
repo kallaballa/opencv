@@ -86,6 +86,36 @@ int armpl_hal_dctFree2D(cvhalDFT *context);
 #undef  cv_hal_dctFree2D
 #define cv_hal_dctFree2D armpl_hal_dctFree2D
 
+int armpl_hal_gemm32f(const float* src1, size_t src1_step, const float* src2, size_t src2_step,
+                       float alpha, const float* src3, size_t src3_step, float beta, float* dst, size_t dst_step,
+                       int m, int n, int k, int flags);
+int armpl_hal_gemm64f(const double* src1, size_t src1_step, const double* src2, size_t src2_step,
+                       double alpha, const double* src3, size_t src3_step, double beta, double* dst, size_t dst_step,
+                       int m, int n, int k, int flags);
+int armpl_hal_gemm32fc(const float* src1, size_t src1_step, const float* src2, size_t src2_step,
+                       float alpha, const float* src3, size_t src3_step, float beta, float* dst, size_t dst_step,
+                       int m, int n, int k, int flags);
+int armpl_hal_gemm64fc(const double* src1, size_t src1_step, const double* src2, size_t src2_step,
+                       double alpha, const double* src3, size_t src3_step, double beta, double* dst, size_t dst_step,
+                       int m, int n, int k, int flags);
+
+#undef  cv_hal_gemm32f
+#define cv_hal_gemm32f armpl_hal_gemm32f
+#undef  cv_hal_gemm64f
+#define cv_hal_gemm64f armpl_hal_gemm64f
+#undef  cv_hal_gemm32fc
+#define cv_hal_gemm32fc armpl_hal_gemm32fc
+#undef  cv_hal_gemm64fc
+#define cv_hal_gemm64fc armpl_hal_gemm64fc
+
+int armpl_hal_LU32f(float* a, size_t a_step, int m, float* b, size_t b_step, int n, int* info);
+int armpl_hal_LU64f(double* a, size_t a_step, int m, double* b, size_t b_step, int n, int* info);
+
+#undef  cv_hal_LU32f
+#define cv_hal_LU32f armpl_hal_LU32f
+#undef  cv_hal_LU64f
+#define cv_hal_LU64f armpl_hal_LU64f
+
 #endif  // HAVE_ARMPL
 
 #endif  // OPENCV_ARMPL_HAL_CORE_HPP

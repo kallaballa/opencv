@@ -2037,7 +2037,7 @@ OPENCV_HAL_IMPL_RISCVV_MUL_SAT(v_int16x8,  32, vwmul_vv_i32m2, vnclip_wx_i16m1)
 OPENCV_HAL_IMPL_RISCVV_MUL_SAT(v_uint16x8, 32, vwmulu_vv_u32m2, vnclipu_wx_u16m1)
 
 
-static const signed char popCountTable[256] =
+static constexpr signed char popCountTable[256] =
 {
     0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4,
     1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5,
@@ -2316,6 +2316,8 @@ OPENCV_HAL_IMPL_RISCVV_SELECT(v_int32x4,  i32m1, vbool32_t, 4, vmsne_vx_i32m1_b3
 OPENCV_HAL_IMPL_RISCVV_SELECT(v_uint8x16, u8m1, vbool8_t, 16, vmsne_vx_u8m1_b8)
 OPENCV_HAL_IMPL_RISCVV_SELECT(v_uint16x8, u16m1, vbool16_t, 8, vmsne_vx_u16m1_b16)
 OPENCV_HAL_IMPL_RISCVV_SELECT(v_uint32x4, u32m1, vbool32_t, 4, vmsne_vx_u32m1_b32)
+OPENCV_HAL_IMPL_RISCVV_SELECT(v_int64x2,  i64m1, vbool64_t, 2, vmsne_vx_i64m1_b64)
+OPENCV_HAL_IMPL_RISCVV_SELECT(v_uint64x2, u64m1, vbool64_t, 2, vmsne_vx_u64m1_b64)
 inline v_float32x4 v_select(const v_float32x4& mask, const v_float32x4& a, const v_float32x4& b)
 {
     return v_float32x4(vmerge_vvm_f32m1(vmfne_vf_f32m1_b32(mask.val, 0, 4), b.val, a.val, 4));

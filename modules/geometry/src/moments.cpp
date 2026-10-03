@@ -317,10 +317,6 @@ struct MomentsInTile_SIMD<ushort, int, int64>
 #endif // CV_SIMD || CV_SIMD_SCALABLE
 
 template<typename T, typename WT, typename MT>
-#if defined __GNUC__ && __GNUC__ == 4 && __GNUC_MINOR__ >= 5 && __GNUC_MINOR__ < 9
-// Workaround for http://gcc.gnu.org/bugzilla/show_bug.cgi?id=60196
-__attribute__((optimize("no-tree-vectorize")))
-#endif
 static void momentsInTile( const Mat& img, double* moments )
 {
     Size size = img.size();
@@ -486,6 +482,12 @@ static bool ocl_moments( InputArray _src, Moments& m, bool binary)
 #ifdef HAVE_IPP
 typedef IppStatus (CV_STDCALL * ippiMoments)(const void* pSrc, int srcStep, IppiSize roiSize, IppiMomentState_64f* pCtx);
 
+template<typename T, IppStatus (CV_STDCALL *fn)(const T*, int, IppiSize, IppiMomentState_64f*)>
+static IppStatus CV_STDCALL ippiMomentsWrap(const void* pSrc, int srcStep, IppiSize roiSize, IppiMomentState_64f* pCtx)
+{
+    return fn((const T*)pSrc, srcStep, roiSize, pCtx);
+}
+
 static bool ipp_moments(Mat &src, Moments &m )
 {
 #if IPP_VERSION_X100 >= 900
@@ -506,9 +508,9 @@ static bool ipp_moments(Mat &src, Moments &m )
     int stateSize = 0;
 
     ippiMoments ippiMoments64f =
-        (type == CV_8UC1)?(ippiMoments)ippiMoments64f_8u_C1R:
-        (type == CV_16UC1)?(ippiMoments)ippiMoments64f_16u_C1R:
-        (type == CV_32FC1)?(ippiMoments)ippiMoments64f_32f_C1R:
+        (type == CV_8UC1)?ippiMomentsWrap<Ipp8u, ippiMoments64f_8u_C1R>:
+        (type == CV_16UC1)?ippiMomentsWrap<Ipp16u, ippiMoments64f_16u_C1R>:
+        (type == CV_32FC1)?ippiMomentsWrap<Ipp32f, ippiMoments64f_32f_C1R>:
         NULL;
     if(!ippiMoments64f)
         return false;

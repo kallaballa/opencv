@@ -1216,7 +1216,7 @@ inline scalartype v_reduce_sum(const _Tpvec& a)  \
 }
 OPENCV_HAL_IMPL_RVV_REDUCE_SUM_FP(v_float32, v_float32, vfloat32m1_t, float, f32, VTraits<v_float32>::vlanes())
 #if CV_SIMD_SCALABLE_64F
-OPENCV_HAL_IMPL_RVV_REDUCE_SUM_FP(v_float64, v_float64, vfloat64m1_t, float, f64, VTraits<v_float64>::vlanes())
+OPENCV_HAL_IMPL_RVV_REDUCE_SUM_FP(v_float64, v_float64, vfloat64m1_t, double, f64, VTraits<v_float64>::vlanes())
 #endif
 
 #define OPENCV_HAL_IMPL_RVV_REDUCE(_Tpvec, func, scalartype, suffix, vl, red) \
@@ -1503,6 +1503,8 @@ OPENCV_HAL_IMPL_RVV_SELECT(v_uint32, VTraits<v_uint32>::vlanes())
 OPENCV_HAL_IMPL_RVV_SELECT(v_int8, VTraits<v_int8>::vlanes())
 OPENCV_HAL_IMPL_RVV_SELECT(v_int16, VTraits<v_int16>::vlanes())
 OPENCV_HAL_IMPL_RVV_SELECT(v_int32, VTraits<v_int32>::vlanes())
+OPENCV_HAL_IMPL_RVV_SELECT(v_uint64, VTraits<v_uint64>::vlanes())
+OPENCV_HAL_IMPL_RVV_SELECT(v_int64, VTraits<v_int64>::vlanes())
 #if CV_SIMD_SCALABLE_FP16
 inline v_float16 v_select(const v_float16& mask, const v_float16& a, const v_float16& b) \
 { \
@@ -2130,7 +2132,7 @@ OPENCV_HAL_IMPL_RVV_INTERLEAVED_PQ(v_int32, 32, __riscv_vzext_vf4, quads)
 OPENCV_HAL_IMPL_RVV_INTERLEAVED_PQ(v_float32, 32, __riscv_vzext_vf4, quads)
 
 //////////// PopCount //////////
-static const unsigned char popCountTable[256] =
+static constexpr unsigned char popCountTable[256] =
 {
     0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4,
     1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5,
@@ -2317,7 +2319,7 @@ inline v_int16 v_round(const v_float16& a)
 inline v_int16 v_floor(const v_float16& a)
 {
 #if defined(__riscv_v_intrinsic) && __riscv_v_intrinsic>11999
-    return __riscv_vfcvt_x_f_v_i16m1_rm(a, 1 /*RNE, round-to-nearest-even*/, VTraits<v_float16>::vlanes());
+    return __riscv_vfcvt_x_f_v_i16m1_rm(a, 2 /*RDN, round-down (towards -inf)*/, VTraits<v_float16>::vlanes());
 #else
     return __riscv_vfcvt_x(vfsub(a, 0.5f - 1e-5, VTraits<v_float16>::vlanes()), VTraits<v_float16>::vlanes());
 #endif
@@ -2326,7 +2328,7 @@ inline v_int16 v_floor(const v_float16& a)
 inline v_int16 v_ceil(const v_float16& a)
 {
 #if defined(__riscv_v_intrinsic) && __riscv_v_intrinsic>11999
-    return __riscv_vfcvt_x_f_v_i16m1_rm(a, 3 /*ROD, round-to-odd*/, VTraits<v_float16>::vlanes());
+    return __riscv_vfcvt_x_f_v_i16m1_rm(a, 3 /*RUP, round-up (towards +inf)*/, VTraits<v_float16>::vlanes());
 #else
     return __riscv_vfcvt_x(vfadd(a, 0.5f - 1e-5, VTraits<v_float16>::vlanes()), VTraits<v_float16>::vlanes());
 #endif

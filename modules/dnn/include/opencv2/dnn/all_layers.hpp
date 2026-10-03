@@ -385,9 +385,6 @@ CV__DNN_INLINE_NS_BEGIN
         virtual void setWeights(InputArray weights, InputArray bias,
                                 int C0, int accuracy) = 0;
         virtual bool fuseAddBias(InputArray bias) = 0;
-        virtual bool fuseBatchNorm(const Ptr<Layer>& bn) = 0;
-        virtual bool fuseActivation(const Ptr<Layer>& activ) = 0;
-        virtual bool fuseAddResidual(Arg residual) = 0;
 
         std::vector<int> strides, dilations, pads;
         int ngroups;
@@ -1501,6 +1498,7 @@ CV__DNN_INLINE_NS_BEGIN
             BITWISE_AND,
             BITWISE_OR,
             BITWISE_XOR,
+            NOT_EQUAL,
             PRELU
         };
         OPERATION op;
@@ -1979,6 +1977,8 @@ CV__DNN_INLINE_NS_BEGIN
     class CV_EXPORTS AttentionOnnxAiLayer : public Layer {
      public:
         int kv_num_heads;
+        // False when the node carries its own KV history in the graph (GroupQueryAttention).
+        bool paged_cache_supported = true;
 
         static Ptr<AttentionOnnxAiLayer> create(const LayerParams &params);
     };

@@ -970,6 +970,8 @@ OPENCV_HAL_IMPL_LASX_SELECT(v_uint16x16)
 OPENCV_HAL_IMPL_LASX_SELECT(v_int16x16)
 OPENCV_HAL_IMPL_LASX_SELECT(v_uint32x8)
 OPENCV_HAL_IMPL_LASX_SELECT(v_int32x8)
+OPENCV_HAL_IMPL_LASX_SELECT(v_uint64x4)
+OPENCV_HAL_IMPL_LASX_SELECT(v_int64x4)
 
 inline v_float32x8 v_select(const v_float32x8 &mask, const v_float32x8 &a, const v_float32x8 &b)
 { return v_float32x8(__lasx_xvbitsel_v(*((__m256i*)&b.val), *((__m256i*)&a.val), *((__m256i*)&mask.val))); }
@@ -1169,7 +1171,7 @@ OPENCV_HAL_IMPL_LASX_ROTATE_CAST(v_rotate_right, v_float64x4, _lasx_256_castsi25
 /** Reverse **/
 inline v_uint8x32 v_reverse(const v_uint8x32 &a)
 {
-    static const __m256i perm = _v256_setr_b(
+    const __m256i perm = _v256_setr_b(
             15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
             15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
     __m256i vec = __lasx_xvshuf_b(a.val, a.val, perm);
@@ -2412,7 +2414,7 @@ inline double v_extract_n(v_float64x4 v)
 template<int i>
 inline v_uint32x8 v_broadcast_element(v_uint32x8 a)
 {
-    static const __m256i perm = __lasx_xvreplgr2vr_w((char)i);
+    const __m256i perm = __lasx_xvreplgr2vr_w((char)i);
     return v_uint32x8(__lasx_xvperm_w(a.val, perm));
 }
 

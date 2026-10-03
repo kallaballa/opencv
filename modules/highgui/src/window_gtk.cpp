@@ -42,6 +42,14 @@
 #include "precomp.hpp"
 #include "backend.hpp"
 
+#if defined(__clang__)
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
+#pragma clang diagnostic ignored "-Wcast-function-type-strict"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic ignored "-Wpragmas"
+#pragma GCC diagnostic ignored "-Wcast-function-type-strict"
+#endif
+
 #if defined (HAVE_GTK)
 
 #include <gtk/gtk.h>
@@ -1995,11 +2003,11 @@ static gboolean icvOnMouse( GtkWidget *widget, GdkEvent *event, gpointer user_da
             break;
 #endif //GTK_VERSION3_4
         case GDK_SCROLL_LEFT:  cv_event = cv::EVENT_MOUSEHWHEEL;
-            /* FALLTHRU */
+            [[fallthrough]];
         case GDK_SCROLL_UP:    flags |= ~0xffff;
             break;
         case GDK_SCROLL_RIGHT: cv_event = cv::EVENT_MOUSEHWHEEL;
-            /* FALLTHRU */
+            [[fallthrough]];
         case GDK_SCROLL_DOWN:  flags |= (((int)1 << 16));
             break;
         default: ;

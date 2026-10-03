@@ -7,6 +7,9 @@
 //////////////////////////////////////////////////////////////////////////////////////////
 
 #include "test_precomp.hpp"
+#include <iomanip>
+#include <limits>
+#include <cfloat>
 #include <float.h>
 #include <math.h>
 #include "opencv2/core/softfloat.hpp"
@@ -2542,8 +2545,13 @@ TEST(Core_KMeans, compactness)
     }
 }
 
-TEST(Core_KMeans, bad_input)
+CV_ENUM(KMeansFlags, KMEANS_PP_CENTERS, KMEANS_RANDOM_CENTERS)
+
+typedef testing::TestWithParam<KMeansFlags> Core_KMeans_BadInput;
+
+TEST_P(Core_KMeans_BadInput, bad_input)
 {
+    int flags = GetParam();
     const int N = 100;
     const int attempts = 4;
     const TermCriteria crit = TermCriteria(TermCriteria::COUNT, 5, 0); // low number of iterations
@@ -2554,21 +2562,41 @@ TEST(Core_KMeans, bad_input)
         SCOPED_TRACE("Huge value");
         data.at<Vec2f>(10, 0) = Vec2f(1e20f, 0);
         Mat labels, centers;
-        EXPECT_ANY_THROW(kmeans(data, K, labels, crit, attempts, KMEANS_PP_CENTERS, centers));
+        EXPECT_LT(kmeans(data, K, labels, crit, attempts, flags, centers), 0.);
+        EXPECT_EQ(K, centers.rows);
+        EXPECT_EQ(N, labels.rows);
     }
     {
         SCOPED_TRACE("Negative value");
         data.at<Vec2f>(10, 0) = Vec2f(0, -1e20f);
         Mat labels, centers;
-        EXPECT_ANY_THROW(kmeans(data, K, labels, crit, attempts, KMEANS_PP_CENTERS, centers));
+        EXPECT_LT(kmeans(data, K, labels, crit, attempts, flags, centers), 0.);
+        EXPECT_EQ(K, centers.rows);
+        EXPECT_EQ(N, labels.rows);
     }
     {
         SCOPED_TRACE("NaN");
         data.at<Vec2f>(10, 0) = Vec2f(0, std::numeric_limits<float>::quiet_NaN());
         Mat labels, centers;
-        EXPECT_ANY_THROW(kmeans(data, K, labels, crit, attempts, KMEANS_PP_CENTERS, centers));
+        EXPECT_LT(kmeans(data, K, labels, crit, attempts, flags, centers), 0.);
+        EXPECT_EQ(K, centers.rows);
+        EXPECT_EQ(N, labels.rows);
+    }
+    {
+        SCOPED_TRACE("All NaN");
+        Mat nan_data(N, 1, CV_32FC2, Scalar::all(std::numeric_limits<float>::quiet_NaN()));
+        Mat labels, centers;
+        EXPECT_LT(kmeans(nan_data, K, labels, crit, attempts, flags, centers), 0.);
+        EXPECT_EQ(K, centers.rows);
+        EXPECT_EQ(N, labels.rows);
+        nan_data.at<Vec2f>(0, 0) = Vec2f(0, 0);
+        EXPECT_LT(kmeans(nan_data, K, labels, crit, attempts, flags, centers), 0.);
+        EXPECT_EQ(K, centers.rows);
+        EXPECT_EQ(N, labels.rows);
     }
 }
+
+INSTANTIATE_TEST_CASE_P(AllFlags, Core_KMeans_BadInput, KMeansFlags::all());
 
 TEST(CovariationMatrixVectorOfMat, accuracy)
 {
@@ -2634,6 +2662,40 @@ TEST(CovariationMatrixVectorOfMatWithMean, accuracy)
     cv::absdiff(goldMean, actualMean.reshape(0,1), meanDiff);
     cv::Scalar sDiff = cv::sum(meanDiff);
     ASSERT_EQ(sDiff.dot(sDiff), 0.0);
+}
+
+TEST(CovariationMatrixVectorOfMatWithMean, non_contiguous_mean)
+{
+    std::vector<cv::Mat> samples;
+    samples.push_back(cv::Mat_<float>({2, 2}, {1, 2, 3, 4}));
+    samples.push_back(cv::Mat_<float>({2, 2}, {2, 4, 6, 8}));
+    samples.push_back(cv::Mat_<float>({2, 2}, {3, 6, 9, 12}));
+
+    const float sentinel0 = 12345.0f;
+    const float sentinel1 = -12345.0f;
+    cv::Mat meanStorage = cv::Mat_<float>({2, 3}, {
+        10, 20, sentinel0,
+        30, 40, sentinel1});
+    cv::Mat meanROI = meanStorage(cv::Rect(0, 0, 2, 2));
+    cv::Mat expectedMean = meanROI.clone();
+    cv::Mat continuousMean = expectedMean.clone();
+    ASSERT_TRUE(continuousMean.isContinuous());
+    ASSERT_FALSE(meanROI.isContinuous());
+    ASSERT_EQ(0, cvtest::norm(expectedMean, meanROI, cv::NORM_INF));
+
+    const int flags = cv::COVAR_ROWS | cv::COVAR_USE_AVG;
+    cv::Mat covContinuous, covROI, covPointer;
+    ASSERT_NO_THROW(cv::calcCovarMatrix(samples, covContinuous, continuousMean, flags, CV_32F));
+    ASSERT_NO_THROW(cv::calcCovarMatrix(&samples[0], static_cast<int>(samples.size()),
+                                       covPointer, meanROI, flags, CV_32F));
+    ASSERT_NO_THROW(cv::calcCovarMatrix(samples, covROI, meanROI, flags, CV_32F));
+
+    EXPECT_EQ(0, cvtest::norm(covContinuous, covROI, cv::NORM_INF));
+    EXPECT_EQ(0, cvtest::norm(covPointer, covROI, cv::NORM_INF));
+    EXPECT_EQ(0, cvtest::norm(expectedMean, continuousMean, cv::NORM_INF));
+    EXPECT_EQ(0, cvtest::norm(expectedMean, meanROI, cv::NORM_INF));
+    EXPECT_EQ(sentinel0, meanStorage.at<float>(0, 2));
+    EXPECT_EQ(sentinel1, meanStorage.at<float>(1, 2));
 }
 
 TEST(Core_Pow, special)
@@ -3574,6 +3636,110 @@ TEST(Core_FastMath, InlineRoundingOps)
     {
         checkRounding<double>(values[i].in, values[i].outCeil, values[i].outFloor);
         checkRounding<float>((float)values[i].in, values[i].outCeil, values[i].outFloor);
+    }
+}
+
+// Reference for the saturating conversions: the exact result clamped to the int range.
+static int refClampToInt(double r)
+{
+    return r >= 2147483647. ? INT_MAX : r <= -2147483648. ? INT_MIN : (int)r;
+}
+
+// For float inputs >= 2^31 the saturated value is platform-dependent: INT_MAX where the hardware
+// conversion saturates by itself (ARM, RISC-V, ...), 2147483520 (the largest float below 2^31, the
+// clamp value) elsewhere (x86, portable branch). Both are accepted; see the cvRound() documentation.
+template<typename T> static void expectFlt2Int(const char* name, T x, int got, int ref)
+{
+    bool ok = got == ref;
+    if (!ok && sizeof(T) == sizeof(float) && ref == INT_MAX)
+        ok = got >= 2147483520 && got <= INT_MAX;
+    EXPECT_TRUE(ok) << name << "(" << std::setprecision(17) << x << ") = " << got << ", expected " << ref;
+}
+
+template<typename T> static void checkSaturatingRounding(T x)
+{
+    double xd = (double)x;
+    // nearbyint() in the default rounding mode is round-half-to-even, like cvRound()
+    expectFlt2Int("cvRound", x, cvRound(x), refClampToInt(std::nearbyint(xd)));
+    expectFlt2Int("cvFloor", x, cvFloor(x), refClampToInt(std::floor(xd)));
+    expectFlt2Int("cvCeil",  x, cvCeil(x),  refClampToInt(std::ceil(xd)));
+    expectFlt2Int("cvTrunc", x, cvTrunc(x), refClampToInt(std::trunc(xd)));
+}
+
+TEST(Core_FastMath, SaturatingRoundingOps)
+{
+    const double inf = std::numeric_limits<double>::infinity();
+    const double vals[] =
+    {
+        0., 0.5, 1.5, 2.5, 2.7, -0.5, -1.5, -2.5, -2.7, 1e6 + 0.5, -1e6 - 0.5,
+        2147483646.5, 2147483647.0, 2147483647.5, 2147483648.0, 2147483649.0,
+        -2147483647.5, -2147483648.0, -2147483648.5, -2147483649.0,
+        3e9, -3e9, 1e10, -1e10, 1e30, -1e30, DBL_MAX, -DBL_MAX, inf, -inf
+    };
+    for (double x : vals)
+    {
+        checkSaturatingRounding(x);
+        checkSaturatingRounding((float)x);
+    }
+    const float fvals[] =
+    {
+        2147483520.f, -2147483648.f, 2147483648.f, -2147483904.f,  // the floats around +-2^31
+        16777216.f, 16777218.f, 8388608.5f, 8388609.5f, FLT_MAX, -FLT_MAX
+    };
+    for (float x : fvals)
+        checkSaturatingRounding(x);
+
+    // the saturated values themselves
+    EXPECT_EQ(INT_MAX, cvRound(1e10)); EXPECT_EQ(INT_MAX, cvFloor(1e10)); EXPECT_EQ(INT_MAX, cvCeil(1e10)); EXPECT_EQ(INT_MAX, cvTrunc(1e10));
+    EXPECT_EQ(INT_MIN, cvRound(-1e10)); EXPECT_EQ(INT_MIN, cvFloor(-1e10)); EXPECT_EQ(INT_MIN, cvCeil(-1e10)); EXPECT_EQ(INT_MIN, cvTrunc(-1e10));
+    EXPECT_EQ(INT_MAX, cvRound(inf)); EXPECT_EQ(INT_MIN, cvFloor(-inf)); EXPECT_EQ(INT_MAX, cvCeil(inf)); EXPECT_EQ(INT_MIN, cvTrunc(-inf));
+    EXPECT_GE(cvRound(1e10f), 2147483520); EXPECT_GE(cvFloor(1e10f), 2147483520); EXPECT_GE(cvCeil(1e10f), 2147483520); EXPECT_GE(cvTrunc(1e10f), 2147483520);
+    EXPECT_EQ(INT_MIN, cvRound(-1e10f)); EXPECT_EQ(INT_MIN, cvFloor(-1e10f)); EXPECT_EQ(INT_MIN, cvCeil(-1e10f)); EXPECT_EQ(INT_MIN, cvTrunc(-1e10f));
+    EXPECT_EQ(INT_MIN, cvFloor(-2147483648.5)); EXPECT_EQ(INT_MIN, cvCeil(-2147483648.5)); EXPECT_EQ(INT_MAX, cvCeil(2147483647.5)); EXPECT_EQ(INT_MAX, cvFloor(2147483647.5));
+    EXPECT_EQ(2147483646, cvFloor(2147483646.5)); EXPECT_EQ(INT_MAX, cvCeil(2147483646.5)); EXPECT_EQ(INT_MIN, cvFloor(-2147483647.5)); EXPECT_EQ(-2147483647, cvCeil(-2147483647.5));
+
+    // random sweep over the whole double range that matters, including the non-representable-as-int region
+    RNG rng(0x12345678);
+    for (int i = 0; i < 200000; i++)
+    {
+        double m = std::exp(rng.uniform(-20., 40.));   // log-uniform magnitude, ~2e-9 .. 2e17
+        double x = (rng.uniform(0, 2) ? -m : m) + rng.uniform(-0.5, 0.5);
+        checkSaturatingRounding(x);
+        checkSaturatingRounding((float)x);
+    }
+}
+
+TEST(Core_FastMath, Round64)
+{
+    const double inf = std::numeric_limits<double>::infinity();
+    EXPECT_EQ(2, cvRound64(2.5)); EXPECT_EQ(4, cvRound64(3.5)); EXPECT_EQ(-2, cvRound64(-2.5)); EXPECT_EQ(-4, cvRound64(-3.5));
+    EXPECT_EQ(3, cvRound64(2.7)); EXPECT_EQ(-3, cvRound64(-2.7)); EXPECT_EQ(0, cvRound64(0.5)); EXPECT_EQ(0, cvRound64(-0.5));
+    EXPECT_EQ((int64)1 << 53, cvRound64(9007199254740992.0));
+    EXPECT_EQ(-((int64)1 << 53), cvRound64(-9007199254740992.0));
+    EXPECT_EQ(9223372036854774784LL, cvRound64(9223372036854774784.0));    // the largest double below 2^63
+    EXPECT_EQ(-9223372036854774784LL, cvRound64(-9223372036854774784.0));
+    EXPECT_EQ(INT64_MAX, cvRound64(9223372036854775808.0)); EXPECT_EQ(INT64_MAX, cvRound64(1e30)); EXPECT_EQ(INT64_MAX, cvRound64(DBL_MAX)); EXPECT_EQ(INT64_MAX, cvRound64(inf));
+    EXPECT_EQ(INT64_MIN, cvRound64(-9223372036854775808.0)); EXPECT_EQ(INT64_MIN, cvRound64(-1e30)); EXPECT_EQ(INT64_MIN, cvRound64(-DBL_MAX)); EXPECT_EQ(INT64_MIN, cvRound64(-inf));
+
+    EXPECT_EQ(2, cvRound64(2.5f)); EXPECT_EQ(4, cvRound64(3.5f)); EXPECT_EQ(-2, cvRound64(-2.5f)); EXPECT_EQ(3, cvRound64(2.7f));
+    EXPECT_EQ(3000000000LL, cvRound64(3e9f));
+    EXPECT_EQ(9223371487098961920LL, cvRound64(9223371487098961920.f));    // the largest float below 2^63
+    EXPECT_EQ(-9223371487098961920LL, cvRound64(-9223371487098961920.f));
+    EXPECT_EQ(INT64_MAX, cvRound64(9223372036854775808.f)); EXPECT_EQ(INT64_MAX, cvRound64(1e30f)); EXPECT_EQ(INT64_MAX, cvRound64(FLT_MAX)); EXPECT_EQ(INT64_MAX, cvRound64((float)inf));
+    EXPECT_EQ(INT64_MIN, cvRound64(-9223372036854775808.f)); EXPECT_EQ(INT64_MIN, cvRound64(-1e30f)); EXPECT_EQ(INT64_MIN, cvRound64(-FLT_MAX)); EXPECT_EQ(INT64_MIN, cvRound64(-(float)inf));
+
+    RNG rng(0x87654321);
+    for (int i = 0; i < 200000; i++)
+    {
+        double m = std::exp(rng.uniform(-20., 50.));   // log-uniform magnitude, ~2e-9 .. 5e21
+        double x = (rng.uniform(0, 2) ? -m : m) + rng.uniform(-0.5, 0.5);
+        double r = std::nearbyint(x);
+        int64 ref = r >= 9223372036854775808. ? INT64_MAX : r <= -9223372036854775808. ? INT64_MIN : (int64)r;
+        EXPECT_EQ(ref, cvRound64(x)) << std::setprecision(17) << x;
+        float xf = (float)x;
+        r = std::nearbyint((double)xf);
+        ref = r >= 9223372036854775808. ? INT64_MAX : r <= -9223372036854775808. ? INT64_MIN : (int64)r;
+        EXPECT_EQ(ref, cvRound64(xf)) << std::setprecision(9) << xf;
     }
 }
 

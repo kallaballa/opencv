@@ -94,7 +94,6 @@
 #include "opencv2/core/vsx_utils.hpp"
 #include "hal_replacement.hpp"
 
-#define GET_OPTIMIZED(func) (func)
 
 namespace cv
 {
@@ -256,9 +255,9 @@ typedef void (*BinaryFunc)(const uchar* src1, size_t step1,
                        uchar* dst, size_t step, Size sz,
                        void*);
 
-typedef void (*BinaryFuncC)(const uchar* src1, size_t step1,
-                       const uchar* src2, size_t step2,
-                       uchar* dst, size_t step, int width, int height,
+typedef void (*BinaryFuncC)(const void* src1, size_t step1,
+                       const void* src2, size_t step2,
+                       void* dst, size_t step, int width, int height,
                        void*);
 
 // Exported so the new element-wise expression engine can reuse the already-optimized,
@@ -520,7 +519,7 @@ CoreTLSData& getCoreTlsData();
 #if defined(BUILD_SHARED_LIBS)
 #if defined _WIN32 || defined WINCE
 #define CL_RUNTIME_EXPORT __declspec(dllexport)
-#elif defined __GNUC__ && __GNUC__ >= 4
+#elif defined __GNUC__
 #define CL_RUNTIME_EXPORT __attribute__ ((visibility ("default")))
 #else
 #define CL_RUNTIME_EXPORT
