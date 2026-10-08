@@ -182,11 +182,20 @@ static const char *defaultAndroidPaths[] = {
     "/system/vendor/lib64/libOpenCL.so",
     "/system/vendor/lib64/egl/libGLES_mali.so",
     "/system/vendor/lib64/libPVROCL.so",
+    "/vendor/lib64/libOpenCL.so",
+    "/vendor/lib64/egl/libGLES_mali.so",
+    "/vendor/lib64/libPVROCL.so",
+    "/odm/lib64/libOpenCL.so",
+    "/odm/lib64/egl/libGLES_mali.so",
     "/data/data/org.pocl.libs/files/lib64/libpocl.so",
     "/system/lib/libOpenCL.so",
     "/system/vendor/lib/libOpenCL.so",
     "/system/vendor/lib/egl/libGLES_mali.so",
     "/system/vendor/lib/libPVROCL.so",
+    "/vendor/lib/libOpenCL.so",
+    "/vendor/lib/egl/libGLES_mali.so",
+    "/vendor/lib/libPVROCL.so",
+    "/odm/lib/libOpenCL.so",
     "/data/data/org.pocl.libs/files/lib/libpocl.so"
 };
 
@@ -379,7 +388,7 @@ static void* opencl_check_fn(int ID)
 }
 #endif // HAVE_OPENCL_STATIC
 
-#ifdef HAVE_OPENGL
+#ifdef HAVE_OPENCL
 
 #if defined(HAVE_OPENCL_STATIC)
 
@@ -425,6 +434,6 @@ static void* opencl_gl_check_fn(int ID)
 
 #endif // HAVE_OPENCL_STATIC
 
-#endif // HAVE_OPENGL
+#endif // HAVE_OPENCL
 
 #endif
