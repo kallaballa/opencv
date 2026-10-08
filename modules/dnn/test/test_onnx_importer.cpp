@@ -427,6 +427,9 @@ TEST_P(Test_ONNX_layers, Deconvolution)
     testONNXModels("deconvolution_output_shape", npy, 0, 0, false, false);
     if (target != DNN_TARGET_CUDA_FP16) // bug
         testONNXModels("deconv_adjpad_2d", npy, 0, 0, false, false);
+    // out_channels == C0, so NK1 == 1: exercises computeSpatChunks()'s spatial
+    // split in conv2_deconv.cpp regardless of thread count.
+    testONNXModels("deconv_spatial_narrow", npy, 0, 0, false, false);
 }
 
 TEST_P(Test_ONNX_layers, Deconvolution3D)
@@ -1468,6 +1471,14 @@ TEST_P(Test_ONNX_layers, Softmax)
     testONNXModels("softmax");
     testONNXModels("log_softmax", npy, 0, 0, false, false);
     testONNXModels("softmax_unfused");
+
+    // Before opset 13 the operator coerces its input to 2D and reduces the flattened
+    // dims [axis, rank), which the CPU path implements.
+    if (backend == DNN_BACKEND_OPENCV && target == DNN_TARGET_CPU)
+    {
+        testONNXModels("softmax_axis_1_opset11");
+        testONNXModels("log_softmax_axis_0_opset11");
+    }
 }
 
 TEST_P(Test_ONNX_layers, Split_EltwiseMax)

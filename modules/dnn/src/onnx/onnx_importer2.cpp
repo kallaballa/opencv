@@ -216,6 +216,7 @@ protected:
     void parseGlobalPool           (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseGRU                  (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseRNN                  (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
+    void parseGelu                 (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseImageScaler          (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseInstanceNormalization(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
     void parseLayerNorm            (LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto);
@@ -2279,12 +2280,20 @@ void ONNXImporter2::parseSoftMax(LayerParams& layerParams, const opencv_onnx::No
     }
     const int opset_onnx_ai = onnx_opset_map[str_domain_ai_onnx];
 
-    if (opset_onnx_ai != 0 && opset_onnx_ai <= 11) {
+    // Softmax-13 is the first version that reduces along "axis" alone; up to opset 12 the
+    // spec coerces the input to 2D and reduces over the flattened dims [axis, rank), and
+    // the default axis is 1 rather than -1.  A node fused from an Exp/ReduceSum/Div
+    // subgraph states its own meaning through the attribute added by the simplifier.
+    bool coerced = (opset_onnx_ai != 0 && opset_onnx_ai < 13);
+    if (layerParams.has("coerced_2d"))
+        coerced = layerParams.get<bool>("coerced_2d");
+    if (coerced) {
         axis = layerParams.get<int>("axis", 1);
     } else {
         axis = layerParams.get<int>("axis", -1);
     }
     layerParams.set<int>("axis", axis);
+    layerParams.set("coerced_2d", coerced);
     layerParams.type = "Softmax";
     layerParams.set("log_softmax", layer_type == "LogSoftmax");
     addLayer(layerParams, node_proto);
@@ -2402,6 +2411,16 @@ void ONNXImporter2::parseLayerNorm(LayerParams& layerParams, const opencv_onnx::
     }
     layerParams.type = "LayerNormalization2";
     addLayer(layerParams, node_proto, n_inputs);
+}
+
+// Gelu(approximate='tanh') is 0.5*x*(1+tanh(sqrt(2/pi)*(x + 0.044715*x^3))), a different
+// function from the exact (erf-based) Gelu it is an approximation of. It has a layer of its
+// own, so route the attribute there instead of computing the exact form.
+void ONNXImporter2::parseGelu(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto)
+{
+    if (layerParams.get<String>("approximate", "none") == "tanh")
+        layerParams.type = "GeluApproximation";
+    addLayer(layerParams, node_proto);
 }
 
 void ONNXImporter2::parseSimpleLayers(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto)
@@ -3286,13 +3305,13 @@ void ONNXImporter2::buildDispatchMap_ONNX_AI()
         "Acos", "Acosh", "Asin", "Asinh", "Atan", "Atanh", "Ceil", "Celu", "Cos",
         "Cosh", "Erf", "Exp", "Floor", "HardSigmoid", "HardSwish",
         "Identity", "Log", "Not", "Round", "Reciprocal", "Selu", "Sign", "Sigmoid", "Sin", "Sinh",
-        "Softplus", "Softsign", "Shrink", "Sqrt", "Tan", "ThresholdedRelu", "Gelu",
-        "GeluApproximation"
+        "Softplus", "Softsign", "Shrink", "Sqrt", "Tan", "ThresholdedRelu", "GeluApproximation"
     };
     for (const auto& name : simpleLayers)
     {
         dispatch[name] = &ONNXImporter2::parseSimpleLayers;
     }
+    dispatch["Gelu"] = &ONNXImporter2::parseGelu;
     dispatch["Dropout"] = &ONNXImporter2::parseDropout;
 
     // BUG: https://github.com/opencv/opencv/issues/26310

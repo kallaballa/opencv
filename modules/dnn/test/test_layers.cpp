@@ -110,6 +110,30 @@ TEST(Layer_Test_Reshape, Accuracy)
     }
 }
 
+// Legacy models spell a flatten-to-(1, total) as a 2D shape whose second element is wrong.
+static MatShape reshape2OutShape(const MatShape& inpShape, const std::vector<int>& spec)
+{
+    LayerParams params;
+    params.set("shape", DictValue::arrayInt<const int*>(spec.data(), spec.size()));
+    Ptr<Layer> layer = LayerFactory::createLayerInstance("Reshape2", params);
+
+    std::vector<MatShape> outputs, internals;
+    layer->getMemoryShapes(std::vector<MatShape>(1, inpShape), 1, outputs, internals);
+    return outputs[0];
+}
+
+TEST(Layer_Test_Reshape2, legacy_shape_spec)
+{
+    EXPECT_EQ(MatShape({1, 7}), reshape2OutShape(MatShape({1, 7}), {1, 5}));
+    EXPECT_EQ(MatShape({1, 7}), reshape2OutShape(MatShape({1, 7}), {0, 5}));
+    EXPECT_EQ(MatShape({1, 24}), reshape2OutShape(MatShape({1, 2, 3, 4}), {0, 5}));
+
+    // a spec that already matches is not the legacy case
+    EXPECT_EQ(MatShape({1, 7}), reshape2OutShape(MatShape({7}), {1, 7}));
+    EXPECT_EQ(MatShape({1, 24}), reshape2OutShape(MatShape({1, 2, 3, 4}), {0, -1}));
+    EXPECT_EQ(MatShape({2, 12}), reshape2OutShape(MatShape({2, 3, 4}), {0, -1}));
+}
+
 class Layer_LSTM_Test : public ::testing::Test
 {
 public:
@@ -1146,6 +1170,109 @@ TEST(Layer_Test_PoolingIndices, Accuracy)
     normAssert(indices, outputs[1].reshape(1, 5));
 }
 
+// The input shape and the pool type are test parameters, so a failing case names the
+// configuration it belongs to.
+typedef testing::TestWithParam<tuple<MatShape, bool> > Layer_Test_GlobalPooling;
+
+struct GlobalPoolingParamName
+{
+    std::string operator()(const testing::TestParamInfo<Layer_Test_GlobalPooling::ParamType>& info) const
+    {
+        const MatShape sizes = std::get<0>(info.param);
+        std::string name = cv::format("N%d", sizes[0]);
+        for (size_t i = 1; i < sizes.size(); i++)
+            name += cv::format("x%d", sizes[i]);
+        return name + (std::get<1>(info.param) ? "_max" : "_ave");
+    }
+};
+
+TEST_P(Layer_Test_GlobalPooling, NDSpatialDimensions)
+{
+    const MatShape sizes = std::get<0>(GetParam());
+    const bool useMax = std::get<1>(GetParam());
+    Mat inp((int)sizes.size(), sizes.data(), CV_32F);
+    randu(inp, -1, 1);
+
+    // One row per (batch, channel) plane; the planes are contiguous in memory.
+    const int nplanes = sizes[0] * sizes[1];
+    Mat planes = inp.reshape(1, nplanes);
+    Mat ref(nplanes, 1, CV_32F);
+    for (int i = 0; i < nplanes; i++)
+    {
+        double maxVal;
+        cv::minMaxIdx(planes.row(i), NULL, &maxVal);
+        const double sum = cv::sum(planes.row(i))[0];
+        ref.at<float>(i) = useMax ? (float)maxVal : (float)(sum / planes.cols);
+    }
+
+    LayerParams lp;
+    lp.name = "testGlobalPooling";
+    lp.type = "Pooling";
+    lp.set("pool", useMax ? "MAX" : "AVE");
+    lp.set("global_pooling", true);
+    Ptr<Layer> layer = LayerFactory::createLayerInstance(lp.type, lp);
+
+    std::vector<Mat> input(1, inp), output;
+    runLayer(layer, input, output);
+
+    // Expected output shape is N x C x 1 x ... x 1.
+    ASSERT_EQ(output[0].dims, (int)sizes.size());
+    for (int d = 2; d < output[0].dims; d++)
+        ASSERT_EQ(output[0].size[d], 1) << "d = " << d;
+
+    normAssert(ref, output[0].reshape(1, nplanes), "", 1e-6, 1e-6);
+}
+
+TEST_P(Layer_Test_GlobalPooling, QuantizedNDSpatialDimensions)
+{
+    const MatShape sizes = std::get<0>(GetParam());
+    const bool useMax = std::get<1>(GetParam());
+    const int nplanes = sizes[0] * sizes[1];
+    Mat inp((int)sizes.size(), sizes.data(), CV_8S);
+    randu(inp, -100, 100);
+
+    Mat planes = inp.reshape(1, nplanes);
+    Mat ref(nplanes, 1, CV_8S);
+    for (int i = 0; i < nplanes; i++)
+    {
+        double maxVal;
+        cv::minMaxIdx(planes.row(i), NULL, &maxVal);
+        const double sum = cv::sum(planes.row(i))[0];
+        ref.at<int8_t>(i) = useMax ? saturate_cast<int8_t>(maxVal)
+                                   : saturate_cast<int8_t>(std::round(sum / planes.cols));
+    }
+
+    LayerParams lp;
+    lp.name = "testGlobalPoolingInt8";
+    lp.type = "PoolingInt8";
+    lp.set("pool", useMax ? "max" : "ave");
+    lp.set("global_pooling", true);
+    lp.set("zeropoints", 0);
+    lp.set("scales", 1.f);
+    Ptr<Layer> layer = LayerFactory::createLayerInstance(lp.type, lp);
+
+    std::vector<MatShape> inputs(1, shape(inp)), outputs, internals;
+    layer->getMemoryShapes(inputs, 1, outputs, internals);
+    ASSERT_EQ(outputs[0].size(), sizes.size());
+    for (int d = 2; d < (int)outputs[0].size(); d++)
+        ASSERT_EQ(outputs[0][d], 1) << "d = " << d;
+
+    std::vector<Mat> input(1, inp), output(1, Mat(outputs[0], CV_8S));
+    layer->finalize(input, output);
+    layer->forward(input, output, std::vector<Mat>());
+
+    const Mat got = output[0].reshape(1, nplanes);
+    for (int j = 0; j < nplanes; j++)
+        EXPECT_EQ((int)got.at<int8_t>(j), (int)ref.at<int8_t>(j)) << "j = " << j;
+}
+
+// The quantized layer shares the parameters of the float one, so both are checked on two
+// spatial dimensions (4-D input) and on the three the layer can describe (5-D input).
+INSTANTIATE_TEST_CASE_P(/**/, Layer_Test_GlobalPooling, testing::Combine(
+    testing::Values(MatShape{2, 3, 4, 5}, MatShape{2, 3, 4, 5, 6}),
+    testing::Bool()),
+    GlobalPoolingParamName());
+
 typedef testing::TestWithParam<tuple<Vec4i, int, tuple<Backend, Target> > > Layer_Test_ShuffleChannel;
 TEST_P(Layer_Test_ShuffleChannel, Accuracy)
 {
@@ -1239,6 +1366,74 @@ TEST(Layer_Test_ReduceMean, accuracy_input_0)
     }
 }
 
+
+// A Reduce over more than two axes carries the odometer index into the next
+// reduced axis; doing so used to drop the steps of the axes above it.
+TEST(Layer_Test_Reduce, NonContiguousAxes)
+{
+    const int sizes[] = {3, 3, 3, 3};
+    const int ndims = 4;
+    Mat inp(ndims, sizes, CV_32F);
+    randu(inp, -1, 1);
+
+    const std::vector<std::vector<int> > axesSets = { {0, 2, 3}, {0, 1, 3} };
+    const char* ops[] = {"MEAN", "SUM"};
+
+    for (int a = 0; a < (int)axesSets.size(); a++)
+    {
+        for (int o = 0; o < 2; o++)
+        {
+            const std::vector<int>& axes = axesSets[a];
+            const bool useMean = o == 0;
+
+            // keepdims=true, so the reduced dimensions are 1 in the reference.
+            std::vector<int> outShape(ndims, 1);
+            int reduceCount = 1;
+            for (int i = 0; i < ndims; i++)
+            {
+                if (std::find(axes.begin(), axes.end(), i) == axes.end())
+                    outShape[i] = sizes[i];
+                else
+                    reduceCount *= sizes[i];
+            }
+
+            Mat ref(outShape, CV_32F, Scalar(0));
+            Mat refFlat = ref.reshape(1, 1);
+            const float* src = inp.ptr<float>();
+            for (int i = 0; i < (int)inp.total(); i++)
+            {
+                int idx[ndims], offset = i, dst = 0;
+                for (int d = ndims - 1; d >= 0; d--)
+                {
+                    idx[d] = offset % sizes[d];
+                    offset /= sizes[d];
+                }
+                for (int d = 0; d < ndims; d++)
+                {
+                    const bool reduced = std::find(axes.begin(), axes.end(), d) != axes.end();
+                    dst = dst * outShape[d] + (reduced ? 0 : idx[d]);
+                }
+                refFlat.at<float>(dst) += src[i];
+            }
+            if (useMean)
+                ref *= 1.f / reduceCount;
+
+            LayerParams lp;
+            lp.name = "testReduce";
+            lp.type = "Reduce2";
+            lp.set("reduce", ops[o]);
+            lp.set("keepdims", true);
+            lp.set("axes", DictValue::arrayInt(&axes[0], (int)axes.size()));
+            Ptr<Layer> layer = LayerFactory::createLayerInstance(lp.type, lp);
+
+            std::vector<Mat> input(1, inp), output;
+            runLayer(layer, input, output);
+
+            EXPECT_EQ(shape(output[0]), shape(ref)) << "axes #" << a << ", op " << ops[o];
+            normAssert(ref.reshape(1, 1), output[0].reshape(1, 1), "", 1e-6, 1e-6);
+        }
+    }
+}
 
 // Check if relu is not fused to convolution if we requested it's output
 TEST(Layer_Test_Convolution, relu_fusion)
@@ -2699,6 +2894,45 @@ TEST(Layer_Test_TanH, NoNaN_LargeInput)
     }
 }
 
+// Softmax/LogSoftmax before ONNX opset 13 coerce the input to the 2D tensor
+// [a_0*...*a_{axis-1}, a_axis*...*a_{n-1}], so axis=1 on a 2x3x4 input normalises the 12
+// values of the flattened tail per sample instead of the 3 values of the axis.
+TEST(Layer_Test_Softmax, Coerced2dReducesFlattenedTail)
+{
+    LayerParams lp;
+    lp.type = "Softmax";
+    lp.name = "test_softmax";
+    lp.set("axis", 1);
+    lp.set("coerced_2d", true);
+    Ptr<Layer> layer = LayerFactory::createLayerInstance("Softmax", lp);
+    ASSERT_TRUE(layer != nullptr);
+
+    const int rows = 2, tail = 12;
+    int dims[] = {rows, 3, 4};
+    Mat inp(3, dims, CV_32F);
+    randu(inp, -2.f, 2.f);
+    std::vector<Mat> inpVec = {inp};
+    std::vector<Mat> outVec;
+
+    runLayer(layer, inpVec, outVec);
+    ASSERT_EQ(outVec.size(), (size_t)1);
+    const Mat& out = outVec[0];
+
+    for (int n = 0; n < rows; n++)
+    {
+        const float* inRow = inp.ptr<float>(n);
+        const float* outRow = out.ptr<float>(n);
+        float maxVal = inRow[0];
+        for (int i = 1; i < tail; i++)
+            maxVal = std::max(maxVal, inRow[i]);
+        double sum = 0;
+        for (int i = 0; i < tail; i++)
+            sum += std::exp(inRow[i] - maxVal);
+        for (int i = 0; i < tail; i++)
+            EXPECT_NEAR(outRow[i], std::exp(inRow[i] - maxVal) / sum, 1e-6f) << "row " << n << " index " << i;
+    }
+}
+
 TEST(Layer_Test_Softmax, NoNaN_AllNegInf)
 {
     LayerParams lp;
@@ -2888,6 +3122,45 @@ TEST(Test_MatMul, ConstantRank1WeightPacking)
     gemm(A, b2d, 1., noArray(), 0., expected2d);
     Mat expected = expected2d.reshape(1, std::vector<int>{M});
     normAssert(outputs[0], expected, "MatMul constant rank-1 weight packing mismatch", 1e-4, 1e-4);
+}
+
+// A constant weight whose leading dims broadcast against the activations: B has more than
+// one batch slice, but fewer than the output batch. The packed-B stride has to be derived
+// from the number of slices actually stored in B, not from the (broadcast) output batch.
+TEST(Test_MatMul, PackedBroadcastMultipleSlices)
+{
+    const int A0 = 2, A1 = 1, M = 3, K = 4;
+    const int B0 = 1, B1 = 5, N = 6;
+    Mat A({A0, A1, M, K}, CV_32F);
+    Mat B({B0, B1, K, N}, CV_32F);
+    randu(A, -1.f, 1.f);
+    randu(B, -1.f, 1.f);
+
+    LayerParams lp;
+    lp.type = "MatMul";
+    lp.name = "matmul_packed_broadcast_multi_slice";
+    lp.set("transA", false);
+    lp.set("transB", false);
+    lp.blobs.push_back(B);
+
+    Ptr<Layer> layer = LayerFactory::createLayerInstance(lp.type, lp);
+    ASSERT_TRUE(layer);
+    std::vector<Mat> inputs = {A}, outputs;
+    runLayer(layer, inputs, outputs);
+    ASSERT_EQ(outputs.size(), (size_t)1);
+
+    Mat expected({A0, B1, M, N}, CV_32F);
+    for (int i = 0; i < A0; i++)
+    {
+        for (int j = 0; j < B1; j++)
+        {
+            Mat a2d(M, K, CV_32F, A.ptr<float>(i, 0));
+            Mat b2d(K, N, CV_32F, B.ptr<float>(0, j));
+            Mat c2d(M, N, CV_32F, expected.ptr<float>(i, j));
+            gemm(a2d, b2d, 1., noArray(), 0., c2d);
+        }
+    }
+    normAssert(outputs[0], expected, "MatMul packed broadcast multi-slice mismatch", 1e-4, 1e-4);
 }
 
 }} // namespace
