@@ -605,6 +605,12 @@ enum { CAP_PROP_ARAVIS_AUTOTRIGGER                              = 600 //!< Autom
 
 //! Properties of cameras available through NDK Camera API backend
 enum { CAP_PROP_ANDROID_DEVICE_TORCH = 8001,
+       //! (**open-only**) Android camera: ask the ImageReader for frames that are
+       //! additionally backed by a GPU-samplable AHardwareBuffer, so they can be
+       //! imported as an EGLImage / GL_TEXTURE_EXTERNAL_OES without a host copy.
+       //! 0 (default) keeps the plain YUV_420_888 CPU path. See
+       //! videoioAndroidCameraHardwareBuffer().
+       CAP_PROP_ANDROID_HARDWARE_BUFFER = 8002,
      };
 
 //! @} Android
@@ -1080,6 +1086,24 @@ protected:
 
     friend class internal::VideoCapturePrivateAccessor;
 };
+
+/** @name Android camera zero-copy access
+    @{
+*/
+//! Android only. Returns the AHardwareBuffer* that backs the most recently
+//! grabbed frame of an Android camera (CAP_ANDROID) opened with
+//! CAP_PROP_ANDROID_HARDWARE_BUFFER, or nullptr when the frame is not hardware
+//! backed. The buffer is borrowed and stays valid until the next grabFrame();
+//! a consumer imports it with EGL_ANDROID_get_native_client_buffer +
+//! eglCreateImageKHR and binds it to GL_TEXTURE_EXTERNAL_OES.
+CV_EXPORTS void* videoioAndroidCameraHardwareBuffer(const VideoCapture& capture);
+//! Android only. The AHardwareBuffer_Format of the buffer above (0 if none).
+CV_EXPORTS int videoioAndroidCameraHardwareBufferFormat(const VideoCapture& capture);
+//! Android only. The camera sensor orientation in degrees clockwise (0/90/180/270).
+CV_EXPORTS int videoioAndroidCameraSensorOrientation(const VideoCapture& capture);
+//! Android only. True if the camera is front facing (its image is mirrored).
+CV_EXPORTS bool videoioAndroidCameraIsFrontFacing(const VideoCapture& capture);
+//! @}
 
 class IVideoWriter;
 

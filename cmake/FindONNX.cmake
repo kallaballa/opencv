@@ -55,6 +55,33 @@ if(__ort_target)
   endif()
 endif()
 
+# Direct layout check under ONNXRT_ROOT_DIR. On a cross build (e.g. the NDK) the
+# global CMAKE_FIND_ROOT_PATH_MODE_{LIBRARY,INCLUDE}=ONLY makes find_library /
+# find_path ignore HINTS that point outside the sysroot, so a vendored ONNX
+# Runtime installed into ONNXRT_ROOT_DIR (lib/ + include/) would never be found
+# below. Checking the conventional layout here first keeps such a vendored/from-
+# package ORT usable; the find_* calls stay as a fallback for system installs.
+if(ONNXRT_ROOT_DIR)
+  if(NOT ORT_LIB)
+    foreach(_ort_subdir lib lib64 bin)
+      if(NOT ORT_LIB)
+        file(GLOB _ort_lib_candidates "${ONNXRT_ROOT_DIR}/${_ort_subdir}/libonnxruntime.so*")
+        foreach(_ort_candidate IN LISTS _ort_lib_candidates)
+          if(NOT _ort_candidate MATCHES "\\.a$")
+            set(ORT_LIB "${_ort_candidate}")
+            break()
+          endif()
+        endforeach()
+        unset(_ort_lib_candidates)
+        unset(_ort_candidate)
+      endif()
+    endforeach()
+  endif()
+  if(NOT ORT_INCLUDE AND EXISTS "${ONNXRT_ROOT_DIR}/include/onnxruntime_cxx_api.h")
+    set(ORT_INCLUDE "${ONNXRT_ROOT_DIR}/include")
+  endif()
+endif()
+
 # Locate headers and libraries via find_* in system paths and/or ONNXRT_ROOT_DIR.
 if(NOT ORT_LIB)
   find_library(ORT_LIB NAMES onnxruntime
