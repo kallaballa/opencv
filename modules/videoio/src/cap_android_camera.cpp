@@ -11,6 +11,7 @@
 #include <thread>
 #include <chrono>
 #include <android/log.h>
+#include <android/hardware_buffer.h>
 #include <camera/NdkCameraManager.h>
 #include <camera/NdkCameraError.h>
 #include <camera/NdkCameraDevice.h>
@@ -78,7 +79,7 @@ static double elapsedTimeFrom(std::chrono::time_point<std::chrono::system_clock>
     return std::chrono::duration<double>(std::chrono::system_clock::now() - start).count();
 }
 
-class AndroidCameraCapture : public IVideoCapture
+class AndroidCameraCapture : public VideoCaptureBase
 {
     int deviceIndex;
     AObjPtr<ACameraManager> cameraManager { nullptr, ACameraManager_delete };
@@ -111,6 +112,23 @@ class AndroidCameraCapture : public IVideoCapture
     RangeValue<int32_t> sensitivityRange;
     float zoomRatio = 1.0f;
     RangeValue<float> zoomRange;
+
+    // Orientation and facing, read from the camera characteristics in
+    // initCapture(). sensorOrientation is the clockwise angle that makes the
+    // sensor's output upright on the device in its native orientation; it is
+    // exposed as CAP_PROP_ORIENTATION_META so VideoCaptureBase::retrieveFrame()
+    // applies it via the generic metadata-rotation path.
+    int32_t sensorOrientation = 0;
+    uint8_t lensFacing = ACAMERA_LENS_FACING_BACK;
+
+    // Zero-copy: when CAP_PROP_ANDROID_HARDWARE_BUFFER is set the ImageReader is
+    // created with a GPU-samplable usage and the acquired AImage is kept (instead
+    // of having its planes copied to a host vector) so its AHardwareBuffer can be
+    // handed to a GL consumer. currentImage always owns the most recent frame.
+    bool wantHardwareBuffer = false;
+    bool haveHardwareBuffer = false;
+    AObjPtr<AImage> currentImage { nullptr, AImage_delete };
+    AHardwareBuffer* hardwareBuffer = nullptr; // borrowed from currentImage
 
     ACameraDevice_stateCallbacks deviceCallbacks = {};
     ACameraCaptureSession_stateCallbacks sessionCallbacks = {};
@@ -155,6 +173,11 @@ public:
 
         desiredWidth = params.get<int32_t>(CAP_PROP_FRAME_WIDTH, desiredWidth);
         desiredHeight = params.get<int32_t>(CAP_PROP_FRAME_HEIGHT, desiredHeight);
+
+        // Opt-in zero-copy: keep the camera buffers GPU-samplable and retain the
+        // AImage so its AHardwareBuffer can be exported (see
+        // videoioAndroidCameraHardwareBuffer()).
+        wantHardwareBuffer = params.get<int32_t>(CAP_PROP_ANDROID_HARDWARE_BUFFER, 0) != 0;
 
         static const struct {
             int propId;
@@ -218,15 +241,21 @@ public:
                 }
             }
         }
-        AObjPtr<AImage> image(img, AImage_delete);
+        // Keep the frame for the lifetime of the current grab: the exported
+        // AHardwareBuffer (zero-copy path) and, on the CPU path, the plane
+        // pointers read below both alias this AImage's buffers.
+        currentImage.reset(img);
+        hardwareBuffer = nullptr;
+        haveHardwareBuffer = false;
+
         int32_t srcFormat = -1;
-        AImage_getFormat(image.get(), &srcFormat);
+        AImage_getFormat(currentImage.get(), &srcFormat);
         if (srcFormat != AIMAGE_FORMAT_YUV_420_888) {
             LOGE("Incorrect image format");
             return false;
         }
         int32_t srcPlanes = 0;
-        AImage_getNumberOfPlanes(image.get(), &srcPlanes);
+        AImage_getNumberOfPlanes(currentImage.get(), &srcPlanes);
         if (srcPlanes != 3) {
             LOGE("Incorrect number of planes in image data");
             return false;
@@ -235,12 +264,12 @@ public:
         uint8_t *yPixel, *uPixel, *vPixel;
         int32_t yLen, uLen, vLen;
         int32_t uvPixelStride;
-        AImage_getPlaneRowStride(image.get(), 0, &yStride);
-        AImage_getPlaneRowStride(image.get(), 1, &uvStride);
-        AImage_getPlaneData(image.get(), 0, &yPixel, &yLen);
-        AImage_getPlaneData(image.get(), 1, &uPixel, &uLen);
-        AImage_getPlaneData(image.get(), 2, &vPixel, &vLen);
-        AImage_getPlanePixelStride(image.get(), 1, &uvPixelStride);
+        AImage_getPlaneRowStride(currentImage.get(), 0, &yStride);
+        AImage_getPlaneRowStride(currentImage.get(), 1, &uvStride);
+        AImage_getPlaneData(currentImage.get(), 0, &yPixel, &yLen);
+        AImage_getPlaneData(currentImage.get(), 1, &uPixel, &uLen);
+        AImage_getPlaneData(currentImage.get(), 2, &vPixel, &vLen);
+        AImage_getPlanePixelStride(currentImage.get(), 1, &uvPixelStride);
         int32_t yBufferLen = yLen;
 
         if ( (uvPixelStride == 2) && (uPixel == vPixel + 1) &&
@@ -267,14 +296,57 @@ public:
             return false;
         }
 
+        // Zero-copy: expose the GPU-samplable AHardwareBuffer in addition to the
+        // CPU planes. A GL consumer imports the buffer via
+        // EGL_ANDROID_get_native_client_buffer + eglCreateImageKHR and samples it
+        // as GL_TEXTURE_EXTERNAL_OES; when that is not possible the planes keep
+        // the CPU path working.
+        if (wantHardwareBuffer) {
+            AHardwareBuffer* buf = nullptr;
+            if (AImage_getHardwareBuffer(currentImage.get(), &buf) == AMEDIA_OK && buf != nullptr) {
+                hardwareBuffer = buf;
+                haveHardwareBuffer = true;
+                LOGV("AHardwareBuffer exported to the consumer");
+            } else {
+                LOGW("AHardwareBuffer unavailable; using the CPU YUV path");
+            }
+        }
+
+        // Copy the CPU planes only when no GPU-samplable AHardwareBuffer is
+        // available. In zero-copy mode the consumer never reads them, so the
+        // ~1.5*W*H memcpy below is pure per-frame waste. retrieveFrame_() sees an
+        // empty buffer and returns false for a hardware-buffered grab, which is
+        // exactly the "pixels are on the GPU" signal; should a GL consumer fail
+        // and turn zero-copy off, the *next* grab takes this copy again, so the
+        // CPU fallback stays available.
         buffer.clear();
-        buffer.insert(buffer.end(), yPixel, yPixel + yBufferLen);
-        buffer.insert(buffer.end(), vPixel, vPixel + yBufferLen / 2);
+        if (!haveHardwareBuffer) {
+            buffer.insert(buffer.end(), yPixel, yPixel + yBufferLen);
+            buffer.insert(buffer.end(), vPixel, vPixel + yBufferLen / 2);
+        }
         return true;
     }
 
-    bool retrieveFrame(int, OutputArray out) CV_OVERRIDE
+    // Borrowed pointers into the current frame; valid until the next grabFrame().
+    AHardwareBuffer* currentHardwareBuffer() const { return hardwareBuffer; }
+
+    int currentHardwareBufferFormat() const {
+        AHardwareBuffer* buf = hardwareBuffer;
+        if (buf == nullptr)
+            return 0;
+        AHardwareBuffer_Desc desc{};
+        AHardwareBuffer_describe(buf, &desc);
+        return static_cast<int>(desc.format);
+    }
+
+    int currentSensorOrientation() const { return sensorOrientation; }
+    bool isFrontFacing() const { return lensFacing == ACAMERA_LENS_FACING_FRONT; }
+
+    bool retrieveFrame_(int, OutputArray out) CV_OVERRIDE
     {
+        // Even in the zero-copy configuration the planes were copied by
+        // grabFrame(), so the CPU path always works as a fallback for consumers
+        // that cannot import the AHardwareBuffer.
         if (buffer.empty()) {
             return false;
         }
@@ -335,7 +407,7 @@ public:
         return true;
     }
 
-    double getProperty(int property_id) const CV_OVERRIDE
+    double getProperty_(int property_id) const CV_OVERRIDE
     {
         switch (property_id) {
             case CAP_PROP_FRAME_WIDTH:
@@ -354,6 +426,11 @@ public:
                 return (flashMode == ACAMERA_FLASH_MODE_TORCH) ? 1 : 0;
             case CAP_PROP_ZOOM:
                 return zoomRange.isValid() ? zoomRatio : -1;
+            // The clockwise rotation that makes the sensor's output upright in
+            // the device's native orientation. VideoCaptureBase::retrieveFrame()
+            // applies it (and swaps the reported width/height) automatically.
+            case CAP_PROP_ORIENTATION_META:
+                return static_cast<double>(sensorOrientation);
             default:
                 break;
         }
@@ -361,7 +438,7 @@ public:
         return CAP_PROP_UNKNOWN;
     }
 
-    bool setProperty(int property_id, double value) CV_OVERRIDE
+    bool setProperty_(int property_id, double value) CV_OVERRIDE
     {
         switch (property_id) {
             case CAP_PROP_FRAME_WIDTH:
@@ -486,13 +563,48 @@ public:
 
         getPropertyRanges(cameraMetadata.get());
 
+        // Sensor orientation and facing. The orientation is the clockwise angle
+        // needed to make the sensor's frames upright in the device's natural
+        // orientation; it is reported as CAP_PROP_ORIENTATION_META.
+        {
+            ACameraMetadata_const_entry entry = {};
+            if (ACameraMetadata_getConstEntry(cameraMetadata.get(),
+                                              ACAMERA_SENSOR_ORIENTATION, &entry) == ACAMERA_OK && entry.count > 0) {
+                sensorOrientation = entry.data.i32[0];
+            }
+            if (ACameraMetadata_getConstEntry(cameraMetadata.get(),
+                                              ACAMERA_LENS_FACING, &entry) == ACAMERA_OK && entry.count > 0) {
+                lensFacing = entry.data.u8[0];
+            }
+            LOGI("Camera sensor orientation: %d deg (facing %d)", sensorOrientation, lensFacing);
+        }
+
         int32_t bestMatchWidth = 0, bestMatchHeight = 0;
         findResolutionMatch(cameraMetadata.get(), bestMatchWidth, bestMatchHeight);
         LOGI("Best resolution match: %dx%d", bestMatchWidth, bestMatchHeight);
 
-        AImageReader* reader;
-        media_status_t mStatus = AImageReader_new(bestMatchWidth, bestMatchHeight,
-                                                  AIMAGE_FORMAT_YUV_420_888, MAX_BUF_COUNT, &reader);
+        AImageReader* reader = nullptr;
+        media_status_t mStatus = AMEDIA_ERROR_UNKNOWN;
+        if (wantHardwareBuffer) {
+            // Zero-copy: the same buffer must be CPU readable (so the plane
+            // fallback in retrieveFrame_ still works) and GPU samplable (so a GL
+            // consumer can import it as an EGLImage / GL_TEXTURE_EXTERNAL_OES).
+            const uint64_t usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
+                                   AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
+            mStatus = AImageReader_newWithUsage(bestMatchWidth, bestMatchHeight,
+                                                AIMAGE_FORMAT_YUV_420_888, usage,
+                                                MAX_BUF_COUNT, &reader);
+            if (mStatus == AMEDIA_OK) {
+                LOGI("ImageReader with GPU-samplable AHardwareBuffer (zero-copy)");
+            } else {
+                LOGW("AImageReader_newWithUsage failed (%d); using the CPU path", mStatus);
+                wantHardwareBuffer = false;
+            }
+        }
+        if (!wantHardwareBuffer) {
+            mStatus = AImageReader_new(bestMatchWidth, bestMatchHeight,
+                                       AIMAGE_FORMAT_YUV_420_888, MAX_BUF_COUNT, &reader);
+        }
         if (mStatus != AMEDIA_OK) {
             LOGE("ImageReader creation failed with error code: %d", mStatus);
             return false;
@@ -806,4 +918,32 @@ Ptr<IVideoCapture> cv::createAndroidCapture_cam(int index, const VideoCapturePar
     if (res && res->initCapture())
         return res;
     return Ptr<IVideoCapture>();
+}
+
+/****************** Zero-copy bridge (see opencv2/videoio.hpp) ********************/
+
+static AndroidCameraCapture* androidCameraBackend(const cv::VideoCapture& capture) {
+    cv::IVideoCapture* icap =
+        cv::internal::VideoCapturePrivateAccessor::getIVideoCapture(capture);
+    return dynamic_cast<AndroidCameraCapture*>(icap);
+}
+
+void* cv::videoioAndroidCameraHardwareBuffer(const cv::VideoCapture& capture) {
+    AndroidCameraCapture* cam = androidCameraBackend(capture);
+    return cam ? cam->currentHardwareBuffer() : nullptr;
+}
+
+int cv::videoioAndroidCameraHardwareBufferFormat(const cv::VideoCapture& capture) {
+    AndroidCameraCapture* cam = androidCameraBackend(capture);
+    return cam ? cam->currentHardwareBufferFormat() : 0;
+}
+
+int cv::videoioAndroidCameraSensorOrientation(const cv::VideoCapture& capture) {
+    AndroidCameraCapture* cam = androidCameraBackend(capture);
+    return cam ? cam->currentSensorOrientation() : 0;
+}
+
+bool cv::videoioAndroidCameraIsFrontFacing(const cv::VideoCapture& capture) {
+    AndroidCameraCapture* cam = androidCameraBackend(capture);
+    return cam ? cam->isFrontFacing() : false;
 }
