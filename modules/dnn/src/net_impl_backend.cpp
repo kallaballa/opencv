@@ -16,6 +16,9 @@
 
 #ifdef HAVE_ONNXRUNTIME
 #include <onnxruntime_cxx_api.h>
+#if defined(__ANDROID__)
+#include <nnapi_provider_factory.h>   // OrtSessionOptionsAppendExecutionProvider_Nnapi
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -96,6 +99,12 @@ void Net::Impl::finalizeOrt()
     CV_Assert(!modelFileName.empty());
 
     int target = IS_DNN_CUDA_TARGET(preferableTarget) ? preferableTarget : DNN_TARGET_CPU;
+#if defined(__ANDROID__)
+    // ORT on Android has no OpenCL execution provider; its accelerator is NNAPI.
+    // DNN_TARGET_NPU selects it (DNN_TARGET_OPENCL stays a no-op -> CPU).
+    if (preferableTarget == DNN_TARGET_NPU)
+        target = DNN_TARGET_NPU;
+#endif
     ort_session.reset();
     ort_names_cache.reset();
 
@@ -115,6 +124,26 @@ void Net::Impl::finalizeOrt()
             opts = Ort::SessionOptions();
         }
     }
+#if defined(__ANDROID__)
+    else if (target == DNN_TARGET_NPU)
+    {
+        // Flags default to 0 so NNAPI may fall back to its own CPU reference for ops
+        // it cannot place; override via OPENCV_DNN_ORT_NNAPI_FLAGS (NNAPIFlags bitmask,
+        // e.g. 1 = NNAPI_FLAG_USE_FP16, 4 = NNAPI_FLAG_CPU_DISABLED).
+        const uint32_t nnapi_flags = (uint32_t)getParam_DNN_ORT_NNAPI_FLAGS();
+        try
+        {
+            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Nnapi(opts, nnapi_flags));
+            CV_LOG_INFO(NULL, "DNN/ONNX/ORT: using NNAPI execution provider (flags=" << nnapi_flags << ")");
+        }
+        catch (const std::exception& e)
+        {
+            CV_LOG_WARNING(NULL, "DNN/ONNX/ORT: NNAPI EP unavailable (" << e.what() << "), using CPU");
+            target = DNN_TARGET_CPU;
+            opts = Ort::SessionOptions();
+        }
+    }
+#endif
 
     // If the user set DNN_PROFILE_*, turn on ORT's session profiler. The JSON
     // file is parsed lazily by collectOrtProfileData() inside getPerfProfile()/printPerfProfile().
@@ -367,7 +396,13 @@ void Net::Impl::setPreferableTarget(int targetId)
 #ifdef HAVE_ONNXRUNTIME
     if (useOrtEngine && mainGraph && modelFormat == DNN_MODEL_ONNX && !modelFileName.empty())
     {
-        int resolved = IS_DNN_CUDA_TARGET(targetId) ? targetId : DNN_TARGET_CPU;
+        int resolved = DNN_TARGET_CPU;
+        if (IS_DNN_CUDA_TARGET(targetId))
+            resolved = targetId;
+#if defined(__ANDROID__)
+        else if (targetId == DNN_TARGET_NPU)
+            resolved = DNN_TARGET_NPU;  // mapped to the ORT NNAPI execution provider
+#endif
         if (preferableTarget != resolved)
         {
             preferableTarget = resolved;

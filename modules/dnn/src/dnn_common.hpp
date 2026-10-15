@@ -35,6 +35,11 @@ bool getParam_DNN_DISABLE_MEMORY_OPTIMIZATIONS();
 bool getParam_DNN_OPENCL_ALLOW_ALL_DEVICES();
 #endif
 
+#ifdef HAVE_ONNXRUNTIME
+/// ORT NNAPI execution-provider flags on Android (NNAPIFlags bitmask)
+int getParam_DNN_ORT_NNAPI_FLAGS();
+#endif
+
 int getParam_DNN_BACKEND_DEFAULT();
 
 // Additional checks (slowdowns execution!)

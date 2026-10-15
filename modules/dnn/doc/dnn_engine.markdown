@@ -40,6 +40,8 @@ cmake -DWITH_ONNXRUNTIME=ON -DDOWNLOAD_ONNXRUNTIME_GPU=ON ..
 
 ORT execution providers are supported, including CUDA for NVIDIA hardware. This makes `ENGINE_ORT` the recommended choice for GPU-accelerated inference while native GPU support for `ENGINE_OPENCV` is still in development.
 
+On Android the ORT package ships **no** OpenCL execution provider, so `DNN_TARGET_OPENCL` is a no-op for `ENGINE_ORT` and inference falls back to CPU. GPU/NPU acceleration is available through **NNAPI**: pass `cv::dnn::DNN_TARGET_NPU` - to `Net::setPreferableTarget()` or to a factory such as `cv::FaceDetectorYN::create()` - which appends ORT's NNAPI execution provider. The provider flags can be tuned with the `OPENCV_DNN_ORT_NNAPI_FLAGS` environment variable (a `NNAPIFlags` bitmask; defaults to 0, e.g. 1 enables FP16 relaxation, 4 disables the NNAPI CPU fallback).
+
 ### Selecting an Engine
 
 The engine parameter is accepted by the `readNet*()` family of functions.

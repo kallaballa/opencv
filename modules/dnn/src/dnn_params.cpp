@@ -33,6 +33,14 @@ bool getParam_DNN_OPENCL_ALLOW_ALL_DEVICES()
 }
 #endif
 
+#ifdef HAVE_ONNXRUNTIME
+int getParam_DNN_ORT_NNAPI_FLAGS()
+{
+    static int PARAM_DNN_ORT_NNAPI_FLAGS = (int)utils::getConfigurationParameterSizeT("OPENCV_DNN_ORT_NNAPI_FLAGS", 0);
+    return PARAM_DNN_ORT_NNAPI_FLAGS;
+}
+#endif
+
 int getParam_DNN_BACKEND_DEFAULT()
 {
     static int PARAM_DNN_BACKEND_DEFAULT = (int)utils::getConfigurationParameterSizeT("OPENCV_DNN_BACKEND_DEFAULT",
